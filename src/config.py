@@ -67,6 +67,13 @@ class Settings:
         progress_roi: ROI for the catch progress bar.
         shake_roi: ROI for shake/QTE detection area.
         shake_enabled: Whether shake detection is enabled.
+        reeling_guard_seconds: Seconds to block premature completion/failure detection at start of reeling.
+        success_confirm_frames: Consecutive frames needed to confirm success.
+        fail_confirm_frames: Consecutive frames needed to confirm failure.
+        bar_gone_confirm_frames: Consecutive frames needed to confirm bar disappearance.
+        action_min_dwell_seconds: Minimum seconds between action changes for control stability.
+        stable_hysteresis_multiplier: Multiplier for hysteresis deadzone when stable.
+        pd_deadband: Deadband for PD controller score to prevent tiny oscillations.
     """
 
     killswitch_key: str = "f6"
@@ -79,6 +86,13 @@ class Settings:
     progress_roi: ROIBounds = field(default_factory=lambda: ROIBounds(0.28, 0.72, 0.87, 0.90))
     shake_roi: ROIBounds = field(default_factory=lambda: ROIBounds(0.10, 0.90, 0.20, 0.70))
     shake_enabled: bool = True
+    reeling_guard_seconds: float = 1.5
+    success_confirm_frames: int = 3
+    fail_confirm_frames: int = 5
+    bar_gone_confirm_frames: int = 15
+    action_min_dwell_seconds: float = 0.08
+    stable_hysteresis_multiplier: float = 1.5
+    pd_deadband: float = 0.02
 
 
 class ConfigManager:

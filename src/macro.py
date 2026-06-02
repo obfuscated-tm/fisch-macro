@@ -124,7 +124,6 @@ class MacroEngine:
         # Action dwell / rate limiting for control stability
         self._last_action_time = 0.0
         self._last_action_type = None  # 'hold', 'release', 'rapid_click'
-        self._min_action_dwell = 0.08  # 80ms minimum between action changes
 
     # ─── Callback Registration ────────────────────────────────────
 
@@ -399,10 +398,18 @@ class MacroEngine:
 
         result = self.detector.detect_all()
 
+        reeling_guard_seconds = settings.reeling_guard_seconds
+        success_confirm_frames = settings.success_confirm_frames
+        fail_confirm_frames = settings.fail_confirm_frames
+        bar_gone_confirm_frames = settings.bar_gone_confirm_frames
+        action_min_dwell_seconds = settings.action_min_dwell_seconds
+        stable_hysteresis_multiplier = settings.stable_hysteresis_multiplier
+        pd_deadband = settings.pd_deadband
+        guard_success_confirm_frames = success_confirm_frames + 2
+
         # ─── Reeling Guard: Block premature completion/failure ─────────
-        REELING_GUARD_SECONDS = 1.5
         elapsed = time.time() - self._reeling_start_time
-        if elapsed < REELING_GUARD_SECONDS:
+        if elapsed < reeling_guard_seconds:
             # During the guard window, still run the control loop but block exits
             # We'll skip the exit checks below by using a flag or early return pattern
             # For now, we'll let it fall through but modify exit logic to respect guard
@@ -414,11 +421,11 @@ class MacroEngine:
         # Success: Progress bar reaches the end
         if result.progress > 0.98:
             self._success_confirm_count += 1
-            logger.debug("Success confirmation: %d/3 consecutive", self._success_confirm_count)
-            if self._success_confirm_count >= 3:
+            logger.debug("Success confirmation: %d/%d consecutive", self._success_confirm_count, success_confirm_frames)
+            if self._success_confirm_count >= success_confirm_frames:
                 # Guard check: only allow success if past guard window OR we have strong confirmation
                 elapsed = time.time() - self._reeling_start_time
-                if elapsed >= REELING_GUARD_SECONDS or self._success_confirm_count >= 5:  # Extra strict if in guard
+                if elapsed >= reeling_guard_seconds or self._success_confirm_count >= guard_success_confirm_frames:
                     self.controller.mouse_release()
                     self.stats.record_catch(perfect=(result.progress > 0.995))
                     self._emit_log("✅ Fish caught! (Progress Full)")
@@ -428,10 +435,7 @@ class MacroEngine:
                     self._success_confirm_count = 0
                     return
                 else:
-                    logger.debug("Guard blocking success exit (%.1fs < %.1fs)", elapsed, REELING_GUARD_SECONDS)
-            else:
-                # Still play the control loop while confirming
-                pass  # fall through to control logic
+                    logger.debug("Guard blocking success exit (%.1fs < %.1fs)", elapsed, reeling_guard_seconds)
         else:
             self._success_confirm_count = 0  # reset on non-success readings
 
@@ -441,11 +445,11 @@ class MacroEngine:
         if not result.bite_confirmed and result.progress < 0.01:
             if time.time() - self._reeling_start_time > 2.0:
                 self._fail_confirm_count += 1
-                logger.debug("Fail confirmation: %d/5 consecutive", self._fail_confirm_count)
-                if self._fail_confirm_count >= 5:
+                logger.debug("Fail confirmation: %d/%d consecutive", self._fail_confirm_count, fail_confirm_frames)
+                if self._fail_confirm_count >= fail_confirm_frames:
                     # Guard check: only allow failure if past guard window
                     elapsed = time.time() - self._reeling_start_time
-                    if elapsed >= REELING_GUARD_SECONDS:
+                    if elapsed >= reeling_guard_seconds:
                         self.controller.mouse_release()
                         self.stats.record_fail()
                         self._emit_log("❌ Fish got away! (Progress Empty)")
@@ -455,7 +459,7 @@ class MacroEngine:
                         self._fail_confirm_count = 0
                         return
                     else:
-                        logger.debug("Guard blocking failure exit (%.1fs < %.1fs)", elapsed, REELING_GUARD_SECONDS)
+                        logger.debug("Guard blocking failure exit (%.1fs < %.1fs)", elapsed, reeling_guard_seconds)
                 else:
                     # Hover during flicker/start while confirming failure
                     self.controller.rapid_click(count=1, interval=0.0)
@@ -470,11 +474,11 @@ class MacroEngine:
         # Handle general bar disappearance (might be success text blocking progress bar)
         if not result.bar_active:
             self._bar_gone_confirm_count += 1
-            logger.debug("Bar-gone confirmation: %d/15 consecutive", self._bar_gone_confirm_count)
-            if self._bar_gone_confirm_count >= 15:
+            logger.debug("Bar-gone confirmation: %d/%d consecutive", self._bar_gone_confirm_count, bar_gone_confirm_frames)
+            if self._bar_gone_confirm_count >= bar_gone_confirm_frames:
                 # Guard check: only allow bar-gone exit if past guard window
                 elapsed = time.time() - self._reeling_start_time
-                if elapsed >= REELING_GUARD_SECONDS:
+                if elapsed >= reeling_guard_seconds:
                     self.controller.mouse_release()
                     
                     # Success criteria fallback: 
@@ -492,7 +496,7 @@ class MacroEngine:
                     self._bar_gone_confirm_count = 0
                     return
                 else:
-                    logger.debug("Guard blocking bar-gone exit (%.1fs < %.1fs)", elapsed, REELING_GUARD_SECONDS)
+                    logger.debug("Guard blocking bar-gone exit (%.1fs < %.1fs)", elapsed, reeling_guard_seconds)
             else:
                 # Hover during flickering while confirming bar gone
                 self.controller.rapid_click(count=1, interval=0.0)
@@ -553,20 +557,19 @@ class MacroEngine:
         pd_score = (kp * error) + (kd * velocity_diff)
         
         # PD-score deadband: prevent tiny oscillations from flipping direction
-        pd_deadband = 0.02
         
         # Deadzone based on target status
         deadzone = 0.05 if on_target else 0.01
         
         # Hysteresis: expand effective stable zone once settled
         if self._last_action_type == 'rapid_click':
-            hysteresis_deadzone = deadzone * 1.5
+            hysteresis_deadzone = deadzone * stable_hysteresis_multiplier
         else:
             hysteresis_deadzone = deadzone
         
         # ─── Rate-limiting: Prevent action thrash ──────────────────────
         now = time.time()
-        action_cooldown = (now - self._last_action_time < self._min_action_dwell)
+        action_cooldown = (now - self._last_action_time < action_min_dwell_seconds)
         
         # 3. Decision Logic
         if near_right_wall and fish_x > bar_center:
