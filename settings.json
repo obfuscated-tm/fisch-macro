@@ -4,24 +4,24 @@
   "cast_hold_time": 2.0,
   "recast_delay": 2.0,
   "scan_interval_ms": 50,
-  "active_profile": "default",
+  "active_profile": "castbound",
   "bar_roi": {
-    "x_start": 0.28,
-    "x_end": 0.72,
-    "y_start": 0.81,
-    "y_end": 0.87
+    "x_start": 0.4173280423280423,
+    "x_end": 0.5674603174603174,
+    "y_start": 0.8393665158371041,
+    "y_end": 0.8721719457013575
   },
   "progress_roi": {
-    "x_start": 0.28,
-    "x_end": 0.72,
-    "y_start": 0.87,
-    "y_end": 0.9
+    "x_start": 0.37896825396825395,
+    "x_end": 0.6038359788359788,
+    "y_start": 0.8936651583710408,
+    "y_end": 0.9083710407239819
   },
   "shake_roi": {
-    "x_start": 0.1,
-    "x_end": 0.9,
-    "y_start": 0.2,
-    "y_end": 0.7
+    "x_start": 0.2916666666666667,
+    "x_end": 0.6951058201058201,
+    "y_start": 0.8472850678733032,
+    "y_end": 0.8699095022624435
   },
   "shake_enabled": true
 }

@@ -76,8 +76,8 @@ def main():
         logger.info("Initializing controller...")
         controller = Controller()
 
-        # Set up the killswitch hotkey
-        logger.info(f"Setting up killswitch on key: {settings.killswitch_key}")
+        # Set up the global start/stop hotkey
+        logger.info(f"Setting up start/stop hotkey on key: {settings.killswitch_key}")
         controller.setup_killswitch(settings.killswitch_key)
 
         logger.info("Initializing macro engine...")

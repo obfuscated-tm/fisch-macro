@@ -12,23 +12,6 @@ from typing import List, Tuple, Optional
 
 
 @dataclass
-class ColorProfile:
-    """Color profile defining HSV ranges for detecting fishing bar elements.
-
-    Each profile can be tuned for different rods or visual conditions.
-    HSV values follow OpenCV convention: H=[0,179], S=[0,255], V=[0,255].
-    """
-
-    name: str = "default"
-    fish_hsv_low: List[int] = field(default_factory=lambda: [140, 80, 100])
-    fish_hsv_high: List[int] = field(default_factory=lambda: [170, 255, 255])
-    bar_hsv_low: List[int] = field(default_factory=lambda: [40, 80, 100])
-    bar_hsv_high: List[int] = field(default_factory=lambda: [90, 255, 255])
-    bar_brightness_threshold: int = 80
-    description: str = ""
-
-
-@dataclass
 class ROIBounds:
     """Region of Interest bounds as fractions of the Roblox window dimensions.
 
@@ -40,6 +23,26 @@ class ROIBounds:
     x_end: float = 0.72
     y_start: float = 0.81
     y_end: float = 0.87
+
+
+@dataclass
+class ColorProfile:
+    """Rod profile defining HSV ranges and optional calibrated ROI bounds.
+
+    HSV values follow OpenCV convention: H=[0,179], S=[0,255], V=[0,255].
+    ROI fields are optional for backwards compatibility with older profiles.
+    """
+
+    name: str = "default"
+    fish_hsv_low: List[int] = field(default_factory=lambda: [140, 80, 100])
+    fish_hsv_high: List[int] = field(default_factory=lambda: [170, 255, 255])
+    bar_hsv_low: List[int] = field(default_factory=lambda: [40, 80, 100])
+    bar_hsv_high: List[int] = field(default_factory=lambda: [90, 255, 255])
+    bar_brightness_threshold: int = 80
+    description: str = ""
+    bar_roi: Optional[ROIBounds] = None
+    progress_roi: Optional[ROIBounds] = None
+    shake_roi: Optional[ROIBounds] = None
 
 
 @dataclass
@@ -143,6 +146,12 @@ class ConfigManager:
         try:
             with open(profile_path, "r") as f:
                 data = json.load(f)
+            if "bar_roi" in data and isinstance(data["bar_roi"], dict):
+                data["bar_roi"] = ROIBounds(**data["bar_roi"])
+            if "progress_roi" in data and isinstance(data["progress_roi"], dict):
+                data["progress_roi"] = ROIBounds(**data["progress_roi"])
+            if "shake_roi" in data and isinstance(data["shake_roi"], dict):
+                data["shake_roi"] = ROIBounds(**data["shake_roi"])
             return ColorProfile(**data)
         except (json.JSONDecodeError, TypeError, KeyError):
             return ColorProfile(name=name)

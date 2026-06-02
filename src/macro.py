@@ -197,6 +197,14 @@ class MacroEngine:
         """Check if we should stop (killswitch or manual stop)."""
         return self._stop_event.is_set() or self.controller.is_killed()
 
+    def _stop_reason(self) -> str:
+        """Return the current stop reason for logging."""
+        if self._stop_event.is_set():
+            return "stop requested"
+        if self.controller.is_killed():
+            return "emergency stop requested"
+        return "none"
+
     # ─── Main Loop ────────────────────────────────────────────────
 
     def _run_loop(self):
@@ -232,7 +240,9 @@ class MacroEngine:
         finally:
             self.controller.mouse_release()
             self._set_state(MacroState.STOPPED)
-            self._emit_log("Macro loop ended")
+            reason = self._stop_reason()
+            logger.info("Macro loop ended (%s)", reason)
+            self._emit_log(f"Macro loop ended ({reason})")
 
     # ─── State Handlers ───────────────────────────────────────────
 

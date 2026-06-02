@@ -1,5 +1,5 @@
 {
-  "name": "default",
+  "name": "castbound",
   "fish_hsv_low": [
     116,
     175,
@@ -21,7 +21,7 @@
     255
   ],
   "bar_brightness_threshold": 180,
-  "description": "Default profile - works with most standard rods",
+  "description": "Calibration for castbound",
   "bar_roi": {
     "x_start": 0.4173280423280423,
     "x_end": 0.5674603174603174,

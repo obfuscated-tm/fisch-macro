@@ -75,6 +75,7 @@ class MacroGUI:
         self.config = config_manager
         self.window_tracker = window_tracker
         self.settings = self.config.load_settings()
+        self._last_hotkey_toggle = 0.0
 
         # Build the GUI
         self.root = tk.Tk()
@@ -107,6 +108,10 @@ class MacroGUI:
         self.engine.on_state_change(self._on_state_change)
         self.engine.on_stats_update(self._on_stats_update)
         self.engine.on_log(self._on_log_message)
+        self.engine.controller.on_hotkey(
+            lambda: self.root.after(0, self._toggle_from_hotkey)
+        )
+        self.root.bind_all("<KeyRelease-F6>", lambda _event: self._toggle_from_hotkey())
 
         # Periodic UI update
         self._update_interval = 500  # ms
@@ -208,7 +213,7 @@ class MacroGUI:
     # ─── Header ───────────────────────────────────────────────────
 
     def _build_header(self):
-        """Build the title header with killswitch info."""
+        """Build the title header with hotkey info."""
         header = ttk.Frame(self.root, style="TFrame")
         header.pack(fill=tk.X, padx=16, pady=(12, 4))
 
@@ -221,7 +226,7 @@ class MacroGUI:
 
         self.header_killswitch_label = ttk.Label(
             title_frame,
-            text=f"⚡ Kill: {self.settings.killswitch_key.upper()}",
+            text=f"⚡ Toggle: {self.settings.killswitch_key.upper()}",
             style="Dim.TLabel",
         )
         self.header_killswitch_label.pack(side=tk.RIGHT)
@@ -296,7 +301,7 @@ class MacroGUI:
 
         self.kill_button = tk.Button(
             tab,
-            text=f"EMERGENCY STOP ({self.settings.killswitch_key.upper()})",
+            text="EMERGENCY STOP",
             font=("Helvetica Neue", 13, "bold"),
             bg=COLORS["danger"],
             fg="#ffffff",
@@ -428,13 +433,13 @@ class MacroGUI:
         self.shake_enabled_var = tk.BooleanVar(value=self.settings.shake_enabled)
         self._add_toggle(content, "Auto Shake", self.shake_enabled_var)
 
-        # ── Killswitch Section ──
-        self._add_section_header(content, "Killswitch")
+        # ── Hotkey Section ──
+        self._add_section_header(content, "Hotkey")
         
         ks_frame = ttk.Frame(content)
         ks_frame.pack(fill=tk.X, padx=12, pady=4)
         
-        ttk.Label(ks_frame, text="Stop Key:").pack(side=tk.LEFT)
+        ttk.Label(ks_frame, text="Start/Stop Key:").pack(side=tk.LEFT)
         self.killswitch_label = ttk.Label(ks_frame, text=self.settings.killswitch_key.upper(), style="Stat.TLabel")
         self.killswitch_label.pack(side=tk.LEFT, padx=10)
         
@@ -548,6 +553,19 @@ class MacroGUI:
         self.profile_combo.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 8))
         self.profile_combo.bind("<<ComboboxSelected>>", self._on_profile_change)
 
+        save_as_profile_btn = tk.Button(
+            pf_inner,
+            text="💾  Save Current Calibration As Rod Profile",
+            font=("Helvetica Neue", 12),
+            bg=COLORS["accent_blue"],
+            fg="#ffffff",
+            activebackground="#3aa3d7",
+            relief=tk.FLAT,
+            cursor="hand2",
+            command=self._save_calibration_as_profile,
+        )
+        save_as_profile_btn.pack(fill=tk.X, pady=(10, 0))
+
         # ROI Settings
         roi_frame = ttk.Frame(tab, style="Card.TFrame")
         roi_frame.pack(fill=tk.X, padx=8, pady=4)
@@ -631,7 +649,7 @@ class MacroGUI:
         # Save calibration
         save_cal_btn = tk.Button(
             tab,
-            text="💾  Save Calibration",
+            text="💾  Save Calibration To Selected Rod",
             font=("Helvetica Neue", 12),
             bg=COLORS["accent_blue"],
             fg="#ffffff",
@@ -723,6 +741,15 @@ class MacroGUI:
                 activebackground="#c73a50",
             )
 
+    def _toggle_from_hotkey(self):
+        """Toggle the macro from F6/global hotkey on the Tk main thread."""
+        now = time.monotonic()
+        if now - self._last_hotkey_toggle < 0.7:
+            return
+        self._last_hotkey_toggle = now
+        self._append_log(f"Hotkey {self.settings.killswitch_key.upper()} pressed")
+        self._toggle_macro()
+
     def _save_settings(self):
         """Save current settings to disk."""
         from src.config import ROIBounds
@@ -740,29 +767,98 @@ class MacroGUI:
         self._append_log("Settings saved ✓")
 
     def _save_calibration(self):
-        """Save ROI calibration settings."""
-        from src.config import ROIBounds
-
+        """Save current calibration settings into the selected rod profile."""
         try:
-            self.settings.bar_roi = ROIBounds(
-                x_start=self.roi_vars["x_start"].get(),
-                x_end=self.roi_vars["x_end"].get(),
-                y_start=self.roi_vars["y_start"].get(),
-                y_end=self.roi_vars["y_end"].get(),
-            )
+            self._sync_bar_roi_from_entries()
+            profile = self.config.load_profile(self.profile_var.get())
+            self._store_current_calibration_in_profile(profile, copy_active_colors=False)
             self.config.save_settings(self.settings)
+            self.config.save_profile(profile)
             self._refresh_roi_fields()
-            self._append_log("Calibration saved ✓")
+            self._update_hsv_display()
+            self._append_log(f"Calibration saved to rod profile: {profile.name}")
         except Exception as e:
             messagebox.showerror("Calibration Error", f"Invalid values: {e}")
 
     def _on_profile_change(self, event):
-        """Handle profile selection change."""
+        """Handle profile selection change by recalling colors and bounds."""
         profile_name = self.profile_var.get()
+        profile = self.config.load_profile(profile_name)
         self.settings.active_profile = profile_name
+        self._apply_profile_calibration(profile)
         self.config.save_settings(self.settings)
+        self._refresh_roi_fields()
         self._update_hsv_display()
-        self._append_log(f"Switched to profile: {profile_name}")
+        self._append_log(f"Loaded rod profile: {profile_name}")
+
+    def _sync_bar_roi_from_entries(self):
+        """Copy manual bar ROI entry values into settings."""
+        from src.config import ROIBounds
+
+        self.settings.bar_roi = ROIBounds(
+            x_start=self.roi_vars["x_start"].get(),
+            x_end=self.roi_vars["x_end"].get(),
+            y_start=self.roi_vars["y_start"].get(),
+            y_end=self.roi_vars["y_end"].get(),
+        )
+
+    def _store_current_calibration_in_profile(self, profile, copy_active_colors=True):
+        """Persist current colors plus all ROI bounds into a rod profile."""
+        if copy_active_colors:
+            active_profile = self.config.get_active_profile()
+            profile.fish_hsv_low = list(active_profile.fish_hsv_low)
+            profile.fish_hsv_high = list(active_profile.fish_hsv_high)
+            profile.bar_hsv_low = list(active_profile.bar_hsv_low)
+            profile.bar_hsv_high = list(active_profile.bar_hsv_high)
+            profile.bar_brightness_threshold = active_profile.bar_brightness_threshold
+        profile.bar_roi = self.settings.bar_roi
+        profile.progress_roi = self.settings.progress_roi
+        profile.shake_roi = self.settings.shake_roi
+
+    def _apply_profile_calibration(self, profile):
+        """Apply saved ROI bounds from a rod profile if present."""
+        if profile.bar_roi is not None:
+            self.settings.bar_roi = profile.bar_roi
+        if profile.progress_roi is not None:
+            self.settings.progress_roi = profile.progress_roi
+        if profile.shake_roi is not None:
+            self.settings.shake_roi = profile.shake_roi
+
+    def _save_calibration_as_profile(self):
+        """Create a named rod profile from the current calibration."""
+        import re
+        from src.config import ColorProfile
+
+        name = simpledialog.askstring(
+            "Save Rod Profile",
+            "Enter the rod name for this calibration:",
+            initialvalue=self.profile_var.get(),
+            parent=self.root,
+        )
+        if name is None:
+            return
+
+        safe_name = re.sub(r"[^A-Za-z0-9_. -]+", "", name.strip()).strip()
+        safe_name = safe_name.replace("/", "-")
+        if not safe_name:
+            messagebox.showwarning("Invalid Name", "Rod profile name cannot be empty.")
+            return
+
+        self._sync_bar_roi_from_entries()
+        profile = ColorProfile(
+            name=safe_name,
+            description=f"Calibration for {safe_name}",
+        )
+        self._store_current_calibration_in_profile(profile)
+        self.config.save_profile(profile)
+
+        self.settings.active_profile = safe_name
+        self.config.save_settings(self.settings)
+        self.profile_var.set(safe_name)
+        self.profile_combo.configure(values=self.config.list_profiles())
+        self._refresh_roi_fields()
+        self._update_hsv_display()
+        self._append_log(f"Saved rod profile: {safe_name}")
 
     def _auto_calibrate(self):
         """Run auto-calibration on the current minigame bar."""
@@ -805,6 +901,7 @@ class MacroGUI:
             profile.fish_hsv_high = result["fish_hsv_high"]
             profile.bar_hsv_low = result["bar_hsv_low"]
             profile.bar_hsv_high = result["bar_hsv_high"]
+            self._store_current_calibration_in_profile(profile)
             self.config.save_profile(profile)
 
             self._update_hsv_display()
@@ -854,9 +951,9 @@ class MacroGUI:
     def _rebind_killswitch(self):
         """Prompt for a new killswitch key and restart the listener."""
         key_name = simpledialog.askstring(
-            "Rebind Killswitch",
+            "Rebind Toggle Hotkey",
             "Enter a key name such as esc, q, x, f8, or f12.\n\n"
-            "Avoid F6 on macOS because it is often captured as a media key.",
+            "This key toggles Start/Stop. F6 may require Fn+F6 on some Macs.",
             initialvalue=self.settings.killswitch_key,
             parent=self.root,
         )
@@ -865,28 +962,26 @@ class MacroGUI:
 
         key_name = key_name.strip().lower()
         if not key_name:
-            messagebox.showwarning("Invalid Key", "Killswitch key cannot be empty.")
+            messagebox.showwarning("Invalid Key", "Hotkey cannot be empty.")
             return
 
         self.settings.killswitch_key = key_name
         self.config.save_settings(self.settings)
         self.engine.controller.setup_killswitch(key_name)
         self._refresh_killswitch_labels()
-        self._append_log(f"Killswitch rebound to {key_name.upper()}")
+        self._append_log(f"Toggle hotkey rebound to {key_name.upper()}")
 
     def _emergency_stop(self):
         """Stop the macro from the GUI without relying on global hotkeys."""
-        self.engine.controller.kill()
-        if self.engine.is_running():
-            self.engine.stop()
+        self.engine.stop()
         self._append_log("Emergency stop pressed")
 
     def _refresh_killswitch_labels(self):
-        """Refresh all visible killswitch labels."""
+        """Refresh all visible hotkey labels."""
         label = self.settings.killswitch_key.upper()
-        self.header_killswitch_label.config(text=f"⚡ Kill: {label}")
+        self.header_killswitch_label.config(text=f"⚡ Toggle: {label}")
         self.killswitch_label.config(text=label)
-        self.kill_button.config(text=f"EMERGENCY STOP ({label})")
+        self.kill_button.config(text="EMERGENCY STOP")
 
     def _refresh_roi_fields(self):
         """Refresh calibration entry fields from current settings."""
@@ -1033,6 +1128,6 @@ class MacroGUI:
     def run(self):
         """Start the GUI main loop."""
         self._append_log("Fisch Macro initialized")
-        self._append_log(f"Killswitch: {self.settings.killswitch_key.upper()}")
+        self._append_log(f"Start/stop hotkey: {self.settings.killswitch_key.upper()}")
         self._append_log("Ready — press Start to begin")
         self.root.mainloop()

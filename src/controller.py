@@ -1,9 +1,9 @@
 """
 Input controller for the Fisch macro.
 
-Handles mouse input (hold, release, click, rapid-click) and the killswitch
-keyboard listener. All mouse actions check the killswitch before executing,
-ensuring the macro can be stopped instantly at any time.
+Handles mouse input (hold, release, click, rapid-click) and the global
+start/stop keyboard listener. Mouse actions are guarded so stop requests
+release held input safely.
 """
 
 import logging
@@ -21,11 +21,10 @@ logger = logging.getLogger(__name__)
 
 
 class Controller:
-    """Manages mouse input and killswitch for the fishing macro.
+    """Manages mouse input and the global hotkey for the fishing macro.
 
-    The killswitch is a keyboard listener that, when triggered, immediately
-    stops all macro activity and releases any held mouse buttons. Multiple
-    callbacks can be registered to run on kill.
+    The hotkey listener is persistent. Pressing the configured key invokes
+    registered callbacks, which the GUI uses to toggle the macro.
 
     Usage:
         controller = Controller()
@@ -44,14 +43,18 @@ class Controller:
         self._mouse_held: bool = False
         self._listener = None
         self._kill_callbacks: List[Callable] = []
-        self._killswitch_key = None
+        self._hotkey_callbacks: List[Callable] = []
+        self._hotkey_key = None
+        self._hotkey_name = "f6"
+        self._last_hotkey_time = 0.0
+        self._hotkey_debounce_seconds = 0.7
         self.logger = logging.getLogger("controller")
 
     def setup_killswitch(self, key_name: str = "f6") -> None:
-        """Set up the keyboard killswitch listener.
+        """Set up the global start/stop hotkey listener.
 
         Args:
-            key_name: Name of the key to use as the killswitch (e.g. 'f6',
+            key_name: Name of the key to use as the hotkey (e.g. 'f6',
                       'esc', 'f12'). Mapped to the appropriate pynput key.
         """
         try:
@@ -64,7 +67,8 @@ class Controller:
             return
 
         # Map the key name string to a pynput Key or KeyCode
-        self._killswitch_key = self._resolve_key(key_name, keyboard)
+        self._hotkey_name = key_name.lower().strip()
+        self._hotkey_key = self._resolve_key(self._hotkey_name, keyboard)
 
         # Stop any existing listener
         if self._listener is not None:
@@ -74,12 +78,12 @@ class Controller:
                 pass
             self._listener = None
 
-        self._listener = keyboard.Listener(on_press=self._on_key_press)
+        self._listener = keyboard.Listener(on_release=self._on_key_release)
         self._listener.daemon = True
         self._listener.start()
 
         self.logger.info(
-            "Killswitch active: press '%s' to stop the macro at any time.",
+            "Global hotkey active: press '%s' to start/stop the macro.",
             key_name,
         )
 
@@ -138,23 +142,30 @@ class Controller:
         )
         return keyboard_module.KeyCode.from_char(key_name_lower[0])
 
-    def _on_key_press(self, key) -> Optional[bool]:
-        """Callback for keyboard listener. Triggers kill on matching key.
+    def _on_key_release(self, key) -> Optional[bool]:
+        """Callback for keyboard listener. Triggers callbacks on matching key.
 
         Args:
             key: The key that was pressed (pynput Key or KeyCode).
 
         Returns:
-            False to stop the listener if killswitch triggered, None otherwise.
+            Always returns None so the listener stays alive.
         """
-        if self._killswitch_key is None:
+        if self._hotkey_key is None:
             return None
 
         try:
-            # Compare the pressed key against the killswitch key
-            if key == self._killswitch_key:
-                self.kill()
-                return False  # Stop the listener
+            if key == self._hotkey_key:
+                now = time.monotonic()
+                if now - self._last_hotkey_time < self._hotkey_debounce_seconds:
+                    return None
+                self._last_hotkey_time = now
+                self.logger.info("Global hotkey pressed: %s", self._hotkey_name)
+                for callback in list(self._hotkey_callbacks):
+                    try:
+                        callback()
+                    except Exception as e:
+                        self.logger.error("Hotkey callback raised an exception: %s", e)
         except AttributeError:
             pass
 
@@ -199,15 +210,8 @@ class Controller:
 
         Clears the killed flag and sets the running flag.
         """
-        # pynput listeners cannot be restarted after returning False from
-        # _on_key_press, so recreate it when a previous killswitch activation
-        # stopped the listener.
         if self._listener is None or not self._listener.is_alive():
-            key_name = getattr(self._killswitch_key, "name", None)
-            if key_name is None:
-                key_name = getattr(self._killswitch_key, "char", None)
-            if key_name:
-                self.setup_killswitch(key_name)
+            self.setup_killswitch(self._hotkey_name)
 
         self._killed.clear()
         self._running.set()
@@ -309,6 +313,10 @@ class Controller:
             callback: A no-argument callable to run on kill.
         """
         self._kill_callbacks.append(callback)
+
+    def on_hotkey(self, callback: Callable) -> None:
+        """Register a callback invoked when the configured hotkey is pressed."""
+        self._hotkey_callbacks.append(callback)
 
     def cleanup(self) -> None:
         """Clean up resources: stop the keyboard listener and release the mouse.

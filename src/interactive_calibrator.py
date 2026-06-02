@@ -31,6 +31,9 @@ class InteractiveCalibrator(tk.Toplevel):
         self.window_tracker = window_tracker
         self.settings = self.config.load_settings()
         self.profile = self.config.get_active_profile()
+        self.window_bounds = self.window_tracker.get_roblox_bounds()
+        self.monitor_left = 0
+        self.monitor_top = 0
 
         self.title("Interactive Calibration")
         self.attributes("-fullscreen", True)
@@ -56,6 +59,8 @@ class InteractiveCalibrator(tk.Toplevel):
         import mss
         with mss.mss() as sct:
             monitor = sct.monitors[1]  # primary monitor
+            self.monitor_left = int(monitor.get("left", 0))
+            self.monitor_top = int(monitor.get("top", 0))
             sct_img = sct.grab(monitor)
             self.raw_bgr = np.array(sct_img)
             self.raw_bgr = cv2.cvtColor(self.raw_bgr, cv2.COLOR_BGRA2BGR)
@@ -143,7 +148,7 @@ class InteractiveCalibrator(tk.Toplevel):
 
     def _draw_existing_rois(self):
         """Draw current saved ROI boxes as a starting point."""
-        window_bounds = self.window_tracker.get_roblox_bounds()
+        window_bounds = self.window_bounds
         if not window_bounds:
             return
 
@@ -154,14 +159,20 @@ class InteractiveCalibrator(tk.Toplevel):
         }
 
         for mode, (roi, color) in roi_styles.items():
-            x0 = window_bounds.x + window_bounds.width * roi.x_start
-            y0 = window_bounds.y + window_bounds.height * roi.y_start
-            x1 = window_bounds.x + window_bounds.width * roi.x_end
-            y1 = window_bounds.y + window_bounds.height * roi.y_end
+            x0 = window_bounds.x + window_bounds.width * roi.x_start - self._logical_monitor_left()
+            y0 = window_bounds.y + window_bounds.height * roi.y_start - self._logical_monitor_top()
+            x1 = window_bounds.x + window_bounds.width * roi.x_end - self._logical_monitor_left()
+            y1 = window_bounds.y + window_bounds.height * roi.y_end - self._logical_monitor_top()
             rect_id = self.canvas.create_rectangle(
                 x0, y0, x1, y1, outline=color, width=2, dash=(6, 4)
             )
             self.drawn_rects[mode] = rect_id
+
+    def _logical_monitor_left(self):
+        return self.monitor_left / self.scale_factor
+
+    def _logical_monitor_top(self):
+        return self.monitor_top / self.scale_factor
 
     def _bind_events(self):
         self.canvas.bind("<ButtonPress-1>", self._on_press)
@@ -252,6 +263,18 @@ class InteractiveCalibrator(tk.Toplevel):
         self.canvas.coords(self.current_rect_id, x0, y0, event.x, event.y)
 
     def _on_release(self, event):
+        try:
+            self._handle_release(event)
+        except Exception as exc:
+            logger.error("Interactive calibration release failed: %s", exc, exc_info=True)
+            self.info_label.config(text=f"Could not save region: {exc}")
+            messagebox.showerror(
+                "Calibration Error",
+                f"Could not save that region.\n\n{exc}",
+                parent=self,
+            )
+
+    def _handle_release(self, event):
         if not self.mode or not self.mode.endswith("_roi") or not self.rect_start:
             return
             
@@ -269,22 +292,31 @@ class InteractiveCalibrator(tk.Toplevel):
         if rw < 10 or rh < 10:
             self.info_label.config(text="Drawn region too small. Try again.")
             self.canvas.delete(self.current_rect_id)
-            del self.drawn_rects[self.mode]
+            self.drawn_rects.pop(self.mode, None)
             return
             
         # Convert to normalized bounds
-        window_bounds = self.window_tracker.get_roblox_bounds()
+        window_bounds = self.window_bounds or self.window_tracker.get_roblox_bounds()
         if not window_bounds:
             messagebox.showerror("Error", "Could not find Roblox window bounds. Make sure Roblox is visible on screen.")
             self.canvas.delete(self.current_rect_id)
-            del self.drawn_rects[self.mode]
+            self.drawn_rects.pop(self.mode, None)
             return
             
         # Use calibrator utility to compute normalized bounds
         from src.calibrator import Calibrator
         calibrator = Calibrator(self.engine.detector, self.config)
         
-        norm_bounds = calibrator.compute_roi_from_rect((rx, ry, rw, rh), window_bounds)
+        screen_rect = (
+            int(rx + self._logical_monitor_left()),
+            int(ry + self._logical_monitor_top()),
+            int(rw),
+            int(rh),
+        )
+        norm_bounds = calibrator.compute_roi_from_rect(screen_rect, window_bounds)
+        if norm_bounds["x_end"] <= norm_bounds["x_start"] or norm_bounds["y_end"] <= norm_bounds["y_start"]:
+            raise ValueError("The box must overlap the Roblox window. Draw the box inside the Roblox game area.")
+
         roi = ROIBounds(**norm_bounds)
         
         if self.mode == "bar_roi":
@@ -327,6 +359,9 @@ class InteractiveCalibrator(tk.Toplevel):
 
     def _save_and_close(self):
         """Save settings and profile, then destroy the window."""
+        self.profile.bar_roi = self.settings.bar_roi
+        self.profile.progress_roi = self.settings.progress_roi
+        self.profile.shake_roi = self.settings.shake_roi
         self.config.save_settings(self.settings)
         self.config.save_profile(self.profile)
         self.destroy()
