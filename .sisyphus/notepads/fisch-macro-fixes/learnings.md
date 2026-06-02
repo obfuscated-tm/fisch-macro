@@ -10,3 +10,14 @@
 - Stable hysteresis: once in rapid_click, deadzone expands by 1.5x before leaving
 - PD-score deadband: 0.02 deadband prevents tiny oscillations from flipping direction
 - All branches check cooldown before switching action types
+- Action dwell state resets on reeling entry so old-session cooldown doesn't leak
+
+## [2026-06-01 21:10:00] Task 4: Config-backed stabilization defaults
+- Settings now carries reeling guard, confirmation-frame counts, dwell, hysteresis, and PD deadband defaults
+- Missing JSON keys fall back to dataclass defaults, preserving backward compatibility
+- Macro reeling logic now reads these values from `settings` instead of hardcoded literals
+
+## [2026-06-01 21:25:00] Task 5: Smoke verification harness
+- Smoke harness uses fake detector/controller objects and direct `_do_reeling()` calls
+- Harness verifies premature finish blocking, flicker hysteresis, and stable-target anti-thrash behavior
+- Evidence files are written under `.sisyphus/evidence/` for each scenario plus an overall pass file

@@ -1,0 +1,60 @@
+{
+  "active_plan": "/Users/owenleung/Documents/Programs/fisch-macro/.sisyphus/plans/fisch-macro-fixes.md",
+  "started_at": "2026-06-02T03:04:52.534Z",
+  "session_ids": [
+    "ses_179c7d133ffe0YD5OawMVR4ueF",
+    "ses_1794f3b7affee9EWCN5qoJrUSM",
+    "ses_1794f3ae8ffe4eeXFNDK64QLC3",
+    "ses_1794f3ad7ffes42C1qwouXzfpg",
+    "ses_1794f3a5fffeMzLMF8aGU8dyJ1",
+    "ses_1794f3a38ffekBby2RG5iC8jOn"
+  ],
+  "session_origins": {
+    "ses_179c7d133ffe0YD5OawMVR4ueF": "direct",
+    "ses_1794f3b7affee9EWCN5qoJrUSM": "appended",
+    "ses_1794f3ae8ffe4eeXFNDK64QLC3": "appended",
+    "ses_1794f3ad7ffes42C1qwouXzfpg": "appended",
+    "ses_1794f3a5fffeMzLMF8aGU8dyJ1": "appended",
+    "ses_1794f3a38ffekBby2RG5iC8jOn": "appended"
+  },
+  "plan_name": "fisch-macro-fixes",
+  "agent": "atlas",
+  "task_sessions": {
+    "todo:1": {
+      "task_key": "todo:1",
+      "task_label": "1",
+      "task_title": "Add cast-transition guardrails",
+      "session_id": "ses_179b4a03fffeeJfyCVk07cDqTt",
+      "agent": "Sisyphus-Junior",
+      "category": "unspecified-high",
+      "updated_at": "2026-06-02T03:15:29.319Z"
+    },
+    "todo:3": {
+      "task_key": "todo:3",
+      "task_label": "3",
+      "task_title": "Damp the positive feedback loop",
+      "session_id": "ses_179a9f9fbffeoR6MAhXjY4lc0l",
+      "agent": "Sisyphus-Junior",
+      "category": "unspecified-high",
+      "updated_at": "2026-06-02T03:33:14.714Z"
+    },
+    "todo:4": {
+      "task_key": "todo:4",
+      "task_label": "4",
+      "task_title": "Wire small config knobs and defaults",
+      "session_id": "ses_17980e423ffelb3Cc4fj8MGKiy",
+      "agent": "Sisyphus-Junior",
+      "category": "unspecified-high",
+      "updated_at": "2026-06-02T04:09:04.040Z"
+    },
+    "todo:5": {
+      "task_key": "todo:5",
+      "task_label": "5",
+      "task_title": "Add smoke verification harness",
+      "session_id": "ses_1794f3b7affee9EWCN5qoJrUSM",
+      "agent": "Sisyphus-Junior",
+      "category": "unspecified-high",
+      "updated_at": "2026-06-02T04:56:32.485Z"
+    }
+  }
+}

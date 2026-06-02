@@ -1,0 +1,4 @@
+PASS: all smoke scenarios passed.
+- premature finish blocked
+- flicker hysteresis held
+- stable target did not thrash

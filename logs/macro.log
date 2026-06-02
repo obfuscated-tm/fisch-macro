@@ -3017,3 +3017,375 @@ cv2.error: OpenCV(4.13.0) :-1: error: (-5:Bad argument) in function 'bitwise_not
 2026-06-01 19:43:45,136 [INFO] macro: State: Catch Complete → Stopped
 2026-06-01 19:43:45,208 [INFO] macro: Macro loop ended (stop requested)
 2026-06-01 19:43:48,137 [INFO] macro: Macro engine stopped
+2026-06-01 21:57:54,623 [INFO] main: Starting Fisch Macro...
+2026-06-01 21:57:54,650 [INFO] main: Initializing configuration...
+2026-06-01 21:57:54,651 [INFO] main: Initializing window tracker...
+2026-06-01 21:57:54,651 [INFO] main: Initializing detector...
+2026-06-01 21:57:54,651 [INFO] main: Initializing controller...
+2026-06-01 21:57:54,651 [INFO] main: Setting up start/stop hotkey on key: f6
+2026-06-01 21:57:54,673 [INFO] controller: Global hotkey active: press 'f6' to start/stop the macro.
+2026-06-01 21:57:54,673 [INFO] main: Initializing macro engine...
+2026-06-01 21:57:54,673 [INFO] main: Starting GUI...
+2026-06-01 21:58:05,407 [INFO] controller: Global hotkey pressed: f6
+2026-06-01 21:58:05,412 [INFO] src.window_tracker: Display scale factor (Quartz): 1.00
+2026-06-01 21:58:05,413 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 21:58:05,415 [INFO] controller: Controller started.
+2026-06-01 21:58:05,415 [INFO] macro: State: Idle → Casting
+2026-06-01 21:58:05,415 [INFO] macro: Macro engine started
+2026-06-01 21:58:05,912 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 21:58:06,412 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 21:58:06,918 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 21:58:07,067 [INFO] macro: State: Casting → Waiting for Bite
+2026-06-01 21:58:07,419 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 21:58:07,920 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 21:58:08,422 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 21:58:08,925 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 21:58:09,426 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 21:58:09,927 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 21:58:10,429 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 21:58:10,933 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 21:58:11,434 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 21:58:11,935 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 21:58:12,436 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 21:58:12,939 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 21:58:13,440 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 21:58:13,941 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 21:58:14,442 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 21:58:14,945 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 21:58:15,446 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 21:58:15,947 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 21:58:16,448 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 21:58:16,950 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 21:58:17,451 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 21:58:17,952 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 21:58:18,453 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 21:58:18,958 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 21:58:19,459 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 21:58:19,961 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 21:58:20,462 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 21:58:20,965 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 21:58:21,466 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 21:58:21,967 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 21:58:22,469 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 21:58:22,971 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 21:58:23,472 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 21:58:23,973 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 21:58:24,474 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 21:58:24,976 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 21:58:25,477 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 21:58:25,524 [INFO] controller: Controller stopped.
+2026-06-01 21:58:25,524 [INFO] macro: State: Waiting for Bite → Stopped
+2026-06-01 21:58:25,564 [INFO] macro: Macro loop ended (stop requested)
+2026-06-01 21:58:28,525 [INFO] macro: Macro engine stopped
+2026-06-01 21:58:28,538 [INFO] controller: Controller stopped.
+2026-06-01 21:58:28,538 [INFO] macro: Macro engine stopped
+2026-06-01 21:58:28,798 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 21:58:28,799 [INFO] controller: Controller started.
+2026-06-01 21:58:28,799 [INFO] macro: State: Stopped → Casting
+2026-06-01 21:58:28,799 [INFO] macro: Macro engine started
+2026-06-01 21:58:29,067 [INFO] controller: Controller stopped.
+2026-06-01 21:58:29,068 [INFO] macro: State: Casting → Stopped
+2026-06-01 21:58:29,163 [INFO] macro: Macro loop ended (stop requested)
+2026-06-01 21:58:32,069 [INFO] macro: Macro engine stopped
+2026-06-01 22:01:08,411 [INFO] controller: Global hotkey pressed: f6
+2026-06-01 22:01:08,469 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:01:08,472 [INFO] controller: Controller started.
+2026-06-01 22:01:08,473 [INFO] macro: State: Stopped → Casting
+2026-06-01 22:01:08,473 [INFO] macro: Macro engine started
+2026-06-01 22:01:08,969 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:01:09,470 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:01:09,972 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:01:10,086 [INFO] macro: State: Casting → Waiting for Bite
+2026-06-01 22:01:10,474 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:01:10,494 [INFO] macro: Bite confirmed — fish on the line!
+2026-06-01 22:01:10,515 [INFO] macro: State: Waiting for Bite → Reeling
+2026-06-01 22:01:10,976 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:01:11,318 [INFO] macro: State: Reeling → Catch Complete
+2026-06-01 22:01:11,477 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:01:11,979 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:01:12,480 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:01:12,984 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:01:13,485 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:01:13,986 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:01:14,157 [INFO] macro: State: Catch Complete → Casting
+2026-06-01 22:01:14,488 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:01:14,990 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:01:15,492 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:01:15,959 [INFO] macro: State: Casting → Waiting for Bite
+2026-06-01 22:01:15,994 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:01:16,064 [INFO] macro: Bite confirmed — fish on the line!
+2026-06-01 22:01:16,064 [INFO] macro: State: Waiting for Bite → Reeling
+2026-06-01 22:01:16,495 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:01:16,998 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:01:17,499 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:01:18,000 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:01:18,502 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:01:18,587 [INFO] macro: State: Reeling → Catch Complete
+2026-06-01 22:01:19,008 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:01:19,510 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:01:20,011 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:01:20,512 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:01:21,016 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:01:21,289 [INFO] macro: State: Catch Complete → Casting
+2026-06-01 22:01:21,518 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:01:22,020 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:01:22,521 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:01:22,916 [INFO] macro: State: Casting → Waiting for Bite
+2026-06-01 22:01:23,024 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:01:23,109 [INFO] macro: Bite confirmed — fish on the line!
+2026-06-01 22:01:23,169 [INFO] macro: State: Waiting for Bite → Reeling
+2026-06-01 22:01:23,525 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:01:23,909 [INFO] macro: State: Reeling → Catch Complete
+2026-06-01 22:01:24,026 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:01:24,527 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:01:25,033 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:01:25,539 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:01:26,040 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:01:26,541 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:01:26,653 [INFO] macro: State: Catch Complete → Casting
+2026-06-01 22:01:27,045 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:01:27,545 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:01:28,047 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:01:28,291 [INFO] macro: State: Casting → Waiting for Bite
+2026-06-01 22:01:28,449 [INFO] macro: Bite confirmed — fish on the line!
+2026-06-01 22:01:28,548 [INFO] macro: State: Waiting for Bite → Reeling
+2026-06-01 22:01:28,548 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:01:29,050 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:01:29,551 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:01:30,052 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:01:30,553 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:01:31,056 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:01:31,557 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:01:32,059 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:01:32,560 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:01:33,062 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:01:33,564 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:01:34,064 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:01:34,565 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:01:35,068 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:01:35,570 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:01:36,070 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:01:36,151 [INFO] macro: State: Reeling → Catch Complete
+2026-06-01 22:01:36,572 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:01:37,074 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:01:37,577 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:01:38,078 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:01:38,580 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:01:38,866 [INFO] macro: State: Catch Complete → Casting
+2026-06-01 22:01:39,083 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:01:39,585 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:01:40,087 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:01:40,588 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:01:40,661 [INFO] macro: State: Casting → Waiting for Bite
+2026-06-01 22:01:40,985 [INFO] macro: Bite confirmed — fish on the line!
+2026-06-01 22:01:41,040 [INFO] macro: State: Waiting for Bite → Reeling
+2026-06-01 22:01:41,090 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:01:41,592 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:01:41,824 [INFO] macro: State: Reeling → Catch Complete
+2026-06-01 22:01:42,093 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:01:42,594 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:01:43,101 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:01:43,602 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:01:44,104 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:01:44,529 [INFO] macro: State: Catch Complete → Casting
+2026-06-01 22:01:44,605 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:01:45,109 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:01:45,611 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:01:46,112 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:01:46,236 [INFO] macro: State: Casting → Waiting for Bite
+2026-06-01 22:01:46,301 [INFO] macro: Bite confirmed — fish on the line!
+2026-06-01 22:01:46,460 [INFO] macro: State: Waiting for Bite → Reeling
+2026-06-01 22:01:46,613 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:01:47,115 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:01:47,617 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:01:48,118 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:01:48,620 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:01:49,123 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:01:49,624 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:01:50,125 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:01:50,627 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:01:51,131 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:01:51,632 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:01:52,134 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:01:52,635 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:01:53,137 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:01:53,638 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:01:54,140 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:01:54,640 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:01:55,142 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:01:55,643 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:01:56,144 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:01:56,645 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:01:57,148 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:01:57,650 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:01:58,151 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:01:58,652 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:01:58,725 [INFO] macro: State: Reeling → Catch Complete
+2026-06-01 22:01:59,158 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:01:59,659 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:02:00,161 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:02:00,662 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:02:01,167 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:02:01,443 [INFO] macro: State: Catch Complete → Casting
+2026-06-01 22:02:01,669 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:02:02,170 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:02:02,672 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:02:03,150 [INFO] macro: State: Casting → Waiting for Bite
+2026-06-01 22:02:03,175 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:02:03,521 [INFO] macro: Bite confirmed — fish on the line!
+2026-06-01 22:02:03,527 [INFO] macro: State: Waiting for Bite → Reeling
+2026-06-01 22:02:03,676 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:02:04,177 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:02:04,358 [INFO] macro: State: Reeling → Catch Complete
+2026-06-01 22:02:04,678 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:02:05,183 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:02:05,684 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:02:06,185 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:02:06,687 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:02:07,082 [INFO] macro: State: Catch Complete → Casting
+2026-06-01 22:02:07,191 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:02:07,692 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:02:08,194 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:02:08,695 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:02:08,775 [INFO] macro: State: Casting → Waiting for Bite
+2026-06-01 22:02:09,019 [INFO] macro: Bite confirmed — fish on the line!
+2026-06-01 22:02:09,153 [INFO] macro: State: Waiting for Bite → Reeling
+2026-06-01 22:02:09,199 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:02:09,387 [INFO] macro: State: Reeling → Catch Complete
+2026-06-01 22:02:09,701 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:02:10,202 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:02:10,703 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:02:11,208 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:02:11,710 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:02:12,100 [INFO] macro: State: Catch Complete → Casting
+2026-06-01 22:02:12,211 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:02:12,713 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:02:13,217 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:02:13,719 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:02:13,736 [INFO] macro: State: Casting → Waiting for Bite
+2026-06-01 22:02:13,987 [INFO] macro: Bite confirmed — fish on the line!
+2026-06-01 22:02:13,987 [INFO] macro: State: Waiting for Bite → Reeling
+2026-06-01 22:02:14,220 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:02:14,721 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:02:14,862 [INFO] macro: State: Reeling → Catch Complete
+2026-06-01 22:02:15,225 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:02:15,727 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:02:16,228 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:02:16,730 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:02:17,233 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:02:17,585 [INFO] macro: State: Catch Complete → Casting
+2026-06-01 22:02:17,734 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:02:18,235 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:02:18,736 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:02:19,218 [INFO] macro: State: Casting → Waiting for Bite
+2026-06-01 22:02:19,242 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:02:19,291 [INFO] macro: Bite confirmed — fish on the line!
+2026-06-01 22:02:19,291 [INFO] macro: State: Waiting for Bite → Reeling
+2026-06-01 22:02:19,743 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:02:20,244 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:02:20,745 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:02:21,247 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:02:21,749 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:02:22,020 [INFO] macro: State: Reeling → Catch Complete
+2026-06-01 22:02:22,250 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:02:22,752 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:02:23,256 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:02:23,757 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:02:24,259 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:02:24,731 [INFO] macro: State: Catch Complete → Casting
+2026-06-01 22:02:24,760 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:02:25,265 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:02:25,768 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:02:26,269 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:02:26,395 [INFO] macro: State: Casting → Waiting for Bite
+2026-06-01 22:02:26,611 [INFO] macro: Bite confirmed — fish on the line!
+2026-06-01 22:02:26,611 [INFO] macro: State: Waiting for Bite → Reeling
+2026-06-01 22:02:26,770 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:02:27,274 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:02:27,502 [INFO] macro: State: Reeling → Catch Complete
+2026-06-01 22:02:27,775 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:02:28,277 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:02:28,778 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:02:29,283 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:02:29,785 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:02:30,219 [INFO] macro: State: Catch Complete → Casting
+2026-06-01 22:02:30,287 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:02:30,788 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:02:31,292 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:02:31,794 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:02:31,873 [INFO] macro: State: Casting → Waiting for Bite
+2026-06-01 22:02:32,127 [INFO] macro: Bite confirmed — fish on the line!
+2026-06-01 22:02:32,260 [INFO] macro: State: Waiting for Bite → Reeling
+2026-06-01 22:02:32,299 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:02:32,800 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:02:33,302 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:02:33,804 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:02:34,305 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:02:34,806 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:02:35,307 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:02:35,809 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:02:36,310 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:02:36,811 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:02:37,314 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:02:37,815 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:02:38,316 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:02:38,816 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:02:39,318 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:02:39,819 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:02:40,321 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:02:40,823 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:02:41,324 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:02:41,826 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:02:42,327 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:02:42,828 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:02:43,331 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:02:43,832 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:02:44,333 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:02:44,835 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:02:45,341 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:02:45,843 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:02:46,317 [INFO] macro: State: Reeling → Catch Complete
+2026-06-01 22:02:46,343 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:02:46,844 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:02:47,350 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:02:47,852 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:02:48,353 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:02:48,855 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:02:49,030 [INFO] macro: State: Catch Complete → Casting
+2026-06-01 22:02:49,359 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:02:49,860 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:02:50,362 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:02:50,658 [INFO] macro: State: Casting → Waiting for Bite
+2026-06-01 22:02:50,863 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:02:50,929 [INFO] macro: Bite confirmed — fish on the line!
+2026-06-01 22:02:50,929 [INFO] macro: State: Waiting for Bite → Reeling
+2026-06-01 22:02:51,366 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:02:51,867 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:02:51,869 [INFO] macro: State: Reeling → Catch Complete
+2026-06-01 22:02:52,369 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:02:52,870 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:02:53,376 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:02:53,878 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:02:54,380 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:02:54,580 [INFO] macro: State: Catch Complete → Casting
+2026-06-01 22:02:54,882 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:02:55,385 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:02:55,887 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:02:56,384 [INFO] macro: State: Casting → Waiting for Bite
+2026-06-01 22:02:56,387 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:02:56,447 [INFO] macro: Bite confirmed — fish on the line!
+2026-06-01 22:02:56,447 [INFO] macro: State: Waiting for Bite → Reeling
+2026-06-01 22:02:56,889 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:02:57,391 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:02:57,892 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:02:58,393 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:02:58,894 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:02:58,955 [INFO] macro: State: Reeling → Catch Complete
+2026-06-01 22:02:59,399 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:02:59,900 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:03:00,402 [INFO] detector: Window info set — origin=(0, 33)  size=1512x884  scale=1.0
+2026-06-01 22:03:00,651 [INFO] controller: Global hotkey pressed: f6
+2026-06-01 22:03:00,653 [INFO] controller: Controller stopped.
+2026-06-01 22:03:00,653 [INFO] macro: State: Catch Complete → Stopped
+2026-06-01 22:03:00,790 [INFO] macro: Macro loop ended (stop requested)
+2026-06-01 22:03:03,655 [INFO] macro: Macro engine stopped
