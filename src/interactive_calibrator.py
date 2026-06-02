@@ -240,10 +240,10 @@ class InteractiveCalibrator(tk.Toplevel):
                     s_low, s_high = max(60, int(s_val)-60), min(255, int(s_val)+60)
                     v_low, v_high = max(50, int(v_val)-60), min(255, int(v_val)+60)
                 else:
-                    # Bar colors (green/white/orange)
-                    h_low, h_high = max(0, int(h_val)-15), min(179, int(h_val)+15)
-                    s_low, s_high = max(40, int(s_val)-50), min(255, int(s_val)+50)
-                    v_low, v_high = max(40, int(v_val)-50), min(255, int(v_val)+50)
+                    # Bar colors (green/white/orange) - use wider range for gradients
+                    h_low, h_high = max(0, int(h_val)-25), min(179, int(h_val)+25)
+                    s_low, s_high = max(30, int(s_val)-70), min(255, int(s_val)+70)
+                    v_low, v_high = max(30, int(v_val)-70), min(255, int(v_val)+70)
                 
                 low_arr = [h_low, s_low, v_low]
                 high_arr = [h_high, s_high, v_high]

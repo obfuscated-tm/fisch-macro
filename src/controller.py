@@ -280,6 +280,9 @@ class Controller:
         if not self._check_safety():
             return
 
+        # Ensure we don't think the mouse is still held after a click
+        self._mouse_held = False
+
         if x is not None and y is not None:
             pyautogui.click(x, y)
         else:
@@ -296,6 +299,9 @@ class Controller:
             count: Number of clicks to perform.
             interval: Seconds between each click.
         """
+        # Ensure we don't think the mouse is still held after clicking
+        self._mouse_held = False
+
         for i in range(count):
             if not self._check_safety():
                 self.logger.debug("Rapid click interrupted by killswitch at click %d.", i)

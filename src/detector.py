@@ -171,11 +171,11 @@ class Detector:
         s_channel = hsv_frame[:, :, 1]
 
         # Very bright pixels (particle effects, glowing edges)
-        # Only strip if they are ALSO low saturation (to avoid stripping the fish icon)
-        bright_mask = (v_channel > 240) & (s_channel < 80)
+        # Only strip if they are ALSO low saturation (to avoid stripping the fish icon or bright bars)
+        bright_mask = (v_channel > 250) & (s_channel < 60)
 
         # Low-saturation bright pixels (white flashes / bloom)
-        flash_mask = (v_channel > 200) & (s_channel < 40)
+        flash_mask = (v_channel > 230) & (s_channel < 20)
 
         vfx_mask = bright_mask | flash_mask
         return (~vfx_mask).astype(np.uint8) * 255
@@ -185,35 +185,19 @@ class Detector:
     # ------------------------------------------------------------------
 
     def detect_bar_active(self, frame: np.ndarray) -> bool:
-        """Determine whether the fishing minigame bar is currently on-screen.
-
-        Uses a combination of mean brightness (the bar overlay darkens the
-        region) and Canny edge detection (strong horizontal lines from the
-        bar's borders).
-        """
+        """Determine whether the fishing minigame bar is currently on-screen."""
         if frame is None or frame.size == 0:
             return False
 
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        mean_brightness = float(np.mean(gray))
-
-        profile = self._config.get_active_profile()
-        threshold = profile.bar_brightness_threshold
-
-        if mean_brightness >= threshold:
-            return False
-
-        # Look for strong horizontal edges (bar borders)
+        
+        # Look for the characteristic horizontal lines of the bar track
         edges = cv2.Canny(gray, 50, 150)
         row_sums = np.sum(edges > 0, axis=1)
-        # A "strong" row has edge pixels across ≥30 % of the width
-        strong_rows = np.sum(row_sums > (frame.shape[1] * 0.3))
+        # The bar track usually has two very long horizontal lines
+        strong_rows = np.sum(row_sums > (frame.shape[1] * 0.5))
 
         if strong_rows >= 2:
-            self.logger.debug(
-                "Bar active — brightness=%.1f (<%.0f), strong_rows=%d",
-                mean_brightness, threshold, strong_rows,
-            )
             return True
 
         return False
@@ -278,9 +262,9 @@ class Detector:
     def detect_control_bar(self, frame: np.ndarray) -> Optional[Tuple[float, float]]:
         """Return ``(left, right)`` normalised boundaries of the control zone.
 
-        The control zone is bounded by green / cyan arrow markers whose HSV
-        range is defined in the active colour profile.  Falls back to a
-        brightness-based heuristic if colour matching fails.
+        The control zone can be On-Target (Green) or Off-Target (Orange/White).
+        We combine both masks to find the full extent of the bar, while being
+        careful to ignore the gray background track.
         """
         if frame is None or frame.size == 0:
             return None
@@ -289,43 +273,62 @@ class Detector:
         hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
         vfx_ok = self._filter_vfx(hsv)
 
-        color_mask = cv2.inRange(
+        # 1. Generate Masks
+        on_mask = cv2.inRange(
             hsv,
-            np.array(profile.bar_hsv_low, dtype=np.uint8),
-            np.array(profile.bar_hsv_high, dtype=np.uint8),
+            np.array(profile.on_target_hsv_low, dtype=np.uint8),
+            np.array(profile.on_target_hsv_high, dtype=np.uint8),
         )
-        mask = cv2.bitwise_and(color_mask, vfx_ok)
+        off_mask = cv2.inRange(
+            hsv,
+            np.array(profile.off_target_hsv_low, dtype=np.uint8),
+            np.array(profile.off_target_hsv_high, dtype=np.uint8),
+        )
+        
+        # 2. Smart Background Exclusion
+        # If the off_target color is low-saturation (grayish), we need to ensure 
+        # we aren't just picking up the background track.
+        s_channel = hsv[:, :, 1]
+        v_channel = hsv[:, :, 2]
+        
+        # Typical background track is dull. The bar (even if gray) usually has 
+        # higher 'V' (brightness) or a slight saturation pop.
+        track_mask = ((s_channel < 30) & (v_channel < 100)).astype(np.uint8) * 255
+        off_mask = cv2.bitwise_and(off_mask, cv2.bitwise_not(track_mask))
+        
+        combined_mask = cv2.bitwise_or(on_mask, off_mask)
+        mask = cv2.bitwise_and(combined_mask, vfx_ok)
 
-        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+        # 3. Clean up and scan for horizontal extent
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (7, 3))
         mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
-        mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
-
-        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        
         w = frame.shape[1]
-
-        if len(contours) >= 2:
-            # Two largest contours → left / right arrow markers
-            sorted_contours = sorted(contours, key=cv2.contourArea, reverse=True)[:2]
-            centroids = []
-            for c in sorted_contours:
-                M = cv2.moments(c)
-                if M["m00"] == 0:
-                    continue
-                centroids.append(int(M["m10"] / M["m00"]))
-            if len(centroids) == 2:
-                left = min(centroids) / w
-                right = max(centroids) / w
-                return (float(np.clip(left, 0.0, 1.0)),
-                        float(np.clip(right, 0.0, 1.0)))
-
-        if len(contours) == 1:
-            x, _, cw, _ = cv2.boundingRect(contours[0])
-            left = x / w
-            right = (x + cw) / w
+        col_counts = np.sum(mask > 0, axis=0)
+        # Requirement: at least 15% vertical fill to be considered part of the bar
+        filled_cols = np.where(col_counts > (frame.shape[0] * 0.15))[0]
+        
+        if len(filled_cols) > 10:
+            # Find the longest contiguous block of filled columns
+            diffs = np.diff(filled_cols)
+            breaks = np.where(diffs > 3)[0] 
+            
+            starts = np.insert(filled_cols[breaks + 1], 0, filled_cols[0])
+            ends = np.append(filled_cols[breaks], filled_cols[-1])
+            
+            lengths = ends - starts
+            best_idx = int(np.argmax(lengths))
+            
+            left = starts[best_idx] / w
+            right = ends[best_idx] / w
+            
+            # Sanity check: the bar should have a reasonable width (e.g., > 5% of track)
+            if right - left < 0.02:
+                return self._brightness_fallback(frame)
+                
             return (float(np.clip(left, 0.0, 1.0)),
                     float(np.clip(right, 0.0, 1.0)))
 
-        # ---- Brightness fallback ----
         return self._brightness_fallback(frame)
 
     def _brightness_fallback(self, frame: np.ndarray) -> Optional[Tuple[float, float]]:
@@ -408,16 +411,17 @@ class Detector:
         off_pixels = cv2.countNonZero(off_mask)
         total_pixels = bar_roi.shape[0] * bar_roi.shape[1]
         
-        # Preference: if we see significantly more on-target color than off-target, it's on.
-        # This handles cases where the bar might have mixed colors during transition.
-        if on_pixels > off_pixels and (on_pixels / total_pixels) > 0.1:
-            return True
+        # Robust Gradient Logic:
+        # 1. If we see a decent amount of On-Target color (>8% of the bar), we're likely on.
+        # 2. If we see both, we check if On-Target is at least half as common as Off-Target.
+        on_pct = on_pixels / total_pixels
+        off_pct = off_pixels / total_pixels
         
-        # Fallback to the original logic if off_target isn't well-defined
-        if (on_pixels / total_pixels) > 0.3:
-            return True
-
-        return False
+        on_target = (on_pct > 0.08) or (on_pct > 0.02 and on_pct > off_pct * 0.5)
+        
+        if on_target:
+            self.logger.debug("Bar ON TARGET (on: %.1f%%, off: %.1f%%)", on_pct*100, off_pct*100)
+        return on_target
 
     # ---- progress bar --------------------------------------------------
 
@@ -524,7 +528,13 @@ class Detector:
 
         shape_active = self.detect_bar_active(bar_frame)
         fish_x = self.detect_fish_x(bar_frame)
-        active = shape_active or fish_x is not None
+        
+        # Check progress bar visibility as well
+        progress_frame = self.capture_roi(settings.progress_roi)
+        progress = self.detect_progress(progress_frame) if progress_frame is not None else 0.0
+        
+        # A minigame is active if we see the bar shape, OR the fish, OR some progress
+        active = shape_active or (fish_x is not None) or (progress > 0.0)
 
         if not active:
             # Check for a shake button instead
@@ -541,10 +551,6 @@ class Detector:
         on_target = False
         if bar_left is not None and bar_right is not None:
             on_target = self.detect_on_target(bar_frame, bar_left, bar_right)
-
-        # Progress
-        progress_frame = self.capture_roi(settings.progress_roi)
-        progress = self.detect_progress(progress_frame) if progress_frame is not None else 0.0
 
         result = DetectionResult(
             bar_active=True,

@@ -107,7 +107,7 @@ class MacroEngine:
 
         # Reeling state tracking
         self._reel_no_detection_count = 0
-        self._reel_max_no_detection = 20  # ~1 second at 50ms intervals
+        self._reel_max_no_detection = 30  # ~1.5 seconds at 50ms intervals
         self._last_progress = 0.0
         self._progress_stuck_count = 0
         self.last_on_target = False
@@ -212,13 +212,20 @@ class MacroEngine:
 
     def _run_loop(self):
         """Main macro loop — runs in daemon thread."""
-        settings = self.config.load_settings()
-
         self._set_state(MacroState.CASTING)
 
         try:
+            # Initial settings load
+            settings = self.config.load_settings()
+            last_settings_load = time.time()
+
             while not self._should_stop():
-                settings = self.config.load_settings()
+                # Refresh settings every 1 second instead of every iteration
+                now = time.time()
+                if now - last_settings_load > 1.0:
+                    settings = self.config.load_settings()
+                    last_settings_load = now
+
                 interval = settings.scan_interval_ms / 1000.0
 
                 if self.state == MacroState.CASTING:
@@ -233,9 +240,12 @@ class MacroEngine:
                     self._do_complete(settings)
                 else:
                     time.sleep(interval)
-
-                # Small sleep to prevent CPU thrashing
-                time.sleep(interval)
+                
+                # If we are reeling, we want maximum responsiveness, 
+                # so we skip the extra sleep and rely on the scan_interval in the next loop.
+                # For other states, a small sleep is fine.
+                if self.state != MacroState.REELING:
+                    time.sleep(interval)
 
         except Exception as e:
             logger.error(f"Macro loop error: {e}", exc_info=True)
@@ -396,55 +406,62 @@ class MacroEngine:
             self.controller.rapid_click(count=2, interval=0.03)
             return
 
-        # Calculate fish velocity for prediction
+        # 1. Dampened Velocity Tracking (Low-pass filter to reduce jitter)
+        alpha = 0.4 
         if self._last_fish_x is not None:
-            self._fish_velocity = (fish_x - self._last_fish_x)
+            inst_velocity = (fish_x - self._last_fish_x)
+            self._fish_velocity = (self._fish_velocity * (1.0 - alpha)) + (inst_velocity * alpha)
+        else:
+            self._fish_velocity = 0.0
         self._last_fish_x = fish_x
 
-        # Predicted fish position (half a tick ahead)
-        predicted_fish_x = fish_x + (self._fish_velocity * 0.5)
+        # 2. Prediction (Slightly reduced to avoid over-correction)
+        predicted_fish_x = fish_x + (self._fish_velocity * 0.2)
 
         bar_center = (bar_left + bar_right) / 2.0
         bar_width = bar_right - bar_left
         
-        # Distance from center (-1.0 to 1.0 relative to bar half-width)
+        # 3. Dynamic Centering Logic
+        # Distance from center (-1.0 to 1.0)
         dist_from_center = (predicted_fish_x - bar_center) / (bar_width / 2.0)
         
-        # Adaptive dead zone: tighter if we are moving away or off-target
-        dead_zone = 0.15 if on_target else 0.05
-
-        if predicted_fish_x > bar_right + 0.01:
-            # Fish is way to the RIGHT → hard hold
+        # Buffer zones
+        dead_zone = 0.08 if on_target else 0.03
+        
+        if predicted_fish_x > bar_right - 0.02:
+            # Fish is near right edge -> hard hold
             self.controller.mouse_hold()
-        elif predicted_fish_x < bar_left - 0.01:
-            # Fish is way to the LEFT → hard release
+        elif predicted_fish_x < bar_left + 0.02:
+            # Fish is near left edge -> hard release
             self.controller.mouse_release()
-        elif not on_target:
-            # Inside bar but color says we are not "on target"
-            # Use small proportional nudges to find the center
-            if dist_from_center > 0:
-                self.controller.mouse_hold()
-                time.sleep(0.04)
-                self.controller.mouse_release()
-            else:
-                self.controller.mouse_release()
-                time.sleep(0.02)
         elif abs(dist_from_center) > dead_zone:
-            # Within bar but not centered enough
+            # Not centered enough - use proportional micro-adjustments
             if dist_from_center > 0:
-                # Nudge right
-                hold_time = min(0.05, 0.02 + (dist_from_center * 0.03))
+                # Need to move RIGHT
+                if dist_from_center < 0.4:
+                    # Micro-nudge right
+                    self.controller.mouse_hold()
+                    time.sleep(0.015) # Very brief hold
+                    self.controller.mouse_release()
+                else:
+                    self.controller.mouse_hold()
+            else:
+                # Need to move LEFT
+                if abs(dist_from_center) < 0.4:
+                    # Micro-drift left
+                    self.controller.mouse_release()
+                    time.sleep(0.01) # Very brief release
+                else:
+                    self.controller.mouse_release()
+        else:
+            # 4. Precision Maintenance (Hovering)
+            # Biased slightly towards holding to combat gravity
+            if dist_from_center > -0.05:
                 self.controller.mouse_hold()
-                time.sleep(hold_time)
+                time.sleep(0.01)
                 self.controller.mouse_release()
             else:
-                # Let it drift left (gravity)
-                wait_time = min(0.04, 0.01 + (abs(dist_from_center) * 0.03))
                 self.controller.mouse_release()
-                time.sleep(wait_time)
-        else:
-            # Centered and on target — stay here
-            self.controller.rapid_click(count=2, interval=0.03)
 
     def _do_complete(self, settings):
         """
