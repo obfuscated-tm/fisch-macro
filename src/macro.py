@@ -117,6 +117,10 @@ class MacroEngine:
         self._bar_velocity = 0.0
         self._last_catch_time = 0.0
         self._reeling_start_time = 0.0
+        # Hysteresis counters for reeling exits
+        self._success_confirm_count = 0
+        self._fail_confirm_count = 0
+        self._bar_gone_confirm_count = 0
 
     # ─── Callback Registration ────────────────────────────────────
 
@@ -323,6 +327,10 @@ class MacroEngine:
             self._last_progress = 0.0
             self._progress_stuck_count = 0
             self._reeling_start_time = time.time()
+            # Reset hysteresis counters when starting reeling
+            self._success_confirm_count = 0
+            self._fail_confirm_count = 0
+            self._bar_gone_confirm_count = 0
             self._set_state(MacroState.REELING)
 
         elif result.shake_pos is not None and settings.shake_enabled:
@@ -351,6 +359,10 @@ class MacroEngine:
             self._reel_no_detection_count = 0
             self._last_progress = 0.0
             self._progress_stuck_count = 0
+            # Reset hysteresis counters when starting reeling
+            self._success_confirm_count = 0
+            self._fail_confirm_count = 0
+            self._bar_gone_confirm_count = 0
             self._set_state(MacroState.REELING)
             return
 
@@ -379,62 +391,106 @@ class MacroEngine:
 
         result = self.detector.detect_all()
 
+        # ─── Reeling Guard: Block premature completion/failure ─────────
+        REELING_GUARD_SECONDS = 1.5
+        elapsed = time.time() - self._reeling_start_time
+        if elapsed < REELING_GUARD_SECONDS:
+            # During the guard window, still run the control loop but block exits
+            # We'll skip the exit checks below by using a flag or early return pattern
+            # For now, we'll let it fall through but modify exit logic to respect guard
+            pass  # Will handle in exit logic below
+
         # Check if bar has disappeared (minigame over)
         # 1. Immediate End-Game Detection
         
         # Success: Progress bar reaches the end
         if result.progress > 0.98:
-            self.controller.mouse_release()
-            self.stats.record_catch(perfect=(result.progress > 0.995))
-            self._emit_log("✅ Fish caught! (Progress Full)")
-            self._emit_stats()
-            self._last_catch_time = time.time()
-            self._set_state(MacroState.COMPLETE)
-            return
+            self._success_confirm_count += 1
+            logger.debug("Success confirmation: %d/3 consecutive", self._success_confirm_count)
+            if self._success_confirm_count >= 3:
+                # Guard check: only allow success if past guard window OR we have strong confirmation
+                elapsed = time.time() - self._reeling_start_time
+                if elapsed >= REELING_GUARD_SECONDS or self._success_confirm_count >= 5:  # Extra strict if in guard
+                    self.controller.mouse_release()
+                    self.stats.record_catch(perfect=(result.progress > 0.995))
+                    self._emit_log("✅ Fish caught! (Progress Full)")
+                    self._emit_stats()
+                    self._last_catch_time = time.time()
+                    self._set_state(MacroState.COMPLETE)
+                    self._success_confirm_count = 0
+                    return
+                else:
+                    logger.debug("Guard blocking success exit (%.1fs < %.1fs)", elapsed, REELING_GUARD_SECONDS)
+            else:
+                # Still play the control loop while confirming
+                pass  # fall through to control logic
+        else:
+            self._success_confirm_count = 0  # reset on non-success readings
 
         # Failure: Progress reached zero and the bar disappeared
         # GRACE PERIOD: Ignore zero-progress failures in the first 2 seconds of reeling
         # to allow for intro animations and progress bar appearing.
         if not result.bite_confirmed and result.progress < 0.01:
             if time.time() - self._reeling_start_time > 2.0:
-                self._reel_no_detection_count += 1
-                # Very short timeout (250ms) when progress is zero
-                if self._reel_no_detection_count > 5:
-                    self.controller.mouse_release()
-                    self.stats.record_fail()
-                    self._emit_log("❌ Fish got away! (Progress Empty)")
-                    self._emit_stats()
-                    self._last_catch_time = time.time()
-                    self._set_state(MacroState.COMPLETE)
+                self._fail_confirm_count += 1
+                logger.debug("Fail confirmation: %d/5 consecutive", self._fail_confirm_count)
+                if self._fail_confirm_count >= 5:
+                    # Guard check: only allow failure if past guard window
+                    elapsed = time.time() - self._reeling_start_time
+                    if elapsed >= REELING_GUARD_SECONDS:
+                        self.controller.mouse_release()
+                        self.stats.record_fail()
+                        self._emit_log("❌ Fish got away! (Progress Empty)")
+                        self._emit_stats()
+                        self._last_catch_time = time.time()
+                        self._set_state(MacroState.COMPLETE)
+                        self._fail_confirm_count = 0
+                        return
+                    else:
+                        logger.debug("Guard blocking failure exit (%.1fs < %.1fs)", elapsed, REELING_GUARD_SECONDS)
+                else:
+                    # Hover during flicker/start while confirming failure
+                    self.controller.rapid_click(count=1, interval=0.0)
                     return
-            # Hover during flicker/start
-            self.controller.rapid_click(count=1, interval=0.0)
-            return
+            else:
+                # Hover during flicker/start
+                self.controller.rapid_click(count=1, interval=0.0)
+                return
+        else:
+            self._fail_confirm_count = 0
 
         # Handle general bar disappearance (might be success text blocking progress bar)
         if not result.bar_active:
-            self._reel_no_detection_count += 1
-            # Medium timeout (500ms) for general disappearance
-            if self._reel_no_detection_count > 10:
-                self.controller.mouse_release()
-                
-                # Success criteria fallback: 
-                # Progress WAS very high just before it disappeared
-                if self._last_progress > 0.90:
-                    self.stats.record_catch(perfect=(self._last_progress > 0.98))
-                    self._emit_log("✅ Fish caught! (Bar Gone)")
+            self._bar_gone_confirm_count += 1
+            logger.debug("Bar-gone confirmation: %d/15 consecutive", self._bar_gone_confirm_count)
+            if self._bar_gone_confirm_count >= 15:
+                # Guard check: only allow bar-gone exit if past guard window
+                elapsed = time.time() - self._reeling_start_time
+                if elapsed >= REELING_GUARD_SECONDS:
+                    self.controller.mouse_release()
+                    
+                    # Success criteria fallback: 
+                    # Progress WAS very high just before it disappeared
+                    if self._last_progress > 0.90:
+                        self.stats.record_catch(perfect=(self._last_progress > 0.98))
+                        self._emit_log("✅ Fish caught! (Bar Gone)")
+                    else:
+                        self.stats.record_fail()
+                        self._emit_log("❌ Fish got away! (Bar Gone)")
+                    
+                    self._last_catch_time = time.time()
+                    self._emit_stats()
+                    self._set_state(MacroState.COMPLETE)
+                    self._bar_gone_confirm_count = 0
+                    return
                 else:
-                    self.stats.record_fail()
-                    self._emit_log("❌ Fish got away! (Bar Gone)")
-
-                self._last_catch_time = time.time()
-                self._emit_stats()
-                self._set_state(MacroState.COMPLETE)
-                return
+                    logger.debug("Guard blocking bar-gone exit (%.1fs < %.1fs)", elapsed, REELING_GUARD_SECONDS)
             else:
-                # Hover during flickering
+                # Hover during flickering while confirming bar gone
                 self.controller.rapid_click(count=1, interval=0.0)
                 return
+        else:
+            self._bar_gone_confirm_count = 0
 
         # Reset no-detection counter since something is visible
         self._reel_no_detection_count = 0
