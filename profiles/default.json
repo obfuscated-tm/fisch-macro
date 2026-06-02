@@ -1,0 +1,9 @@
+{
+  "name": "default",
+  "fish_hsv_low": [140, 80, 100],
+  "fish_hsv_high": [170, 255, 255],
+  "bar_hsv_low": [40, 80, 100],
+  "bar_hsv_high": [90, 255, 255],
+  "bar_brightness_threshold": 80,
+  "description": "Default profile - works with most standard rods"
+}

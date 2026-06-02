@@ -1,0 +1,27 @@
+{
+  "killswitch_key": "f6",
+  "auto_recast": true,
+  "cast_hold_time": 2.0,
+  "recast_delay": 2.0,
+  "scan_interval_ms": 50,
+  "active_profile": "default",
+  "bar_roi": {
+    "x_start": 0.28,
+    "x_end": 0.72,
+    "y_start": 0.81,
+    "y_end": 0.87
+  },
+  "progress_roi": {
+    "x_start": 0.28,
+    "x_end": 0.72,
+    "y_start": 0.87,
+    "y_end": 0.9
+  },
+  "shake_roi": {
+    "x_start": 0.1,
+    "x_end": 0.9,
+    "y_start": 0.2,
+    "y_end": 0.7
+  },
+  "shake_enabled": false
+}
