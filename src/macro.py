@@ -121,6 +121,10 @@ class MacroEngine:
         self._success_confirm_count = 0
         self._fail_confirm_count = 0
         self._bar_gone_confirm_count = 0
+        # Action dwell / rate limiting for control stability
+        self._last_action_time = 0.0
+        self._last_action_type = None  # 'hold', 'release', 'rapid_click'
+        self._min_action_dwell = 0.08  # 80ms minimum between action changes
 
     # ─── Callback Registration ────────────────────────────────────
 
@@ -544,43 +548,88 @@ class MacroEngine:
         
         pd_score = (kp * error) + (kd * velocity_diff)
         
+        # PD-score deadband: prevent tiny oscillations from flipping direction
+        pd_deadband = 0.02
+        
         # Deadzone based on target status
         deadzone = 0.05 if on_target else 0.01
+        
+        # Hysteresis: expand effective stable zone once settled
+        if self._last_action_type == 'rapid_click':
+            hysteresis_deadzone = deadzone * 1.5
+        else:
+            hysteresis_deadzone = deadzone
+        
+        # ─── Rate-limiting: Prevent action thrash ──────────────────────
+        now = time.time()
+        action_cooldown = (now - self._last_action_time < self._min_action_dwell)
         
         # 3. Decision Logic
         if near_right_wall and fish_x > bar_center:
             # At right limit and fish is right - stay pinned
-            self.controller.mouse_hold()
+            action = 'hold'
+            if not (action_cooldown and action != self._last_action_type):
+                self.controller.mouse_hold()
+                self._last_action_time = time.time()
+                self._last_action_type = action
         elif near_left_wall and fish_x < bar_center:
             # At left limit and fish is left - stay pinned
-            self.controller.mouse_release()
+            action = 'release'
+            if not (action_cooldown and action != self._last_action_type):
+                self.controller.mouse_release()
+                self._last_action_time = time.time()
+                self._last_action_type = action
         elif fish_x > bar_right - 0.01:
             # Panic: Fish is escaping right
-            self.controller.mouse_hold()
+            action = 'hold'
+            if not (action_cooldown and action != self._last_action_type):
+                self.controller.mouse_hold()
+                self._last_action_time = time.time()
+                self._last_action_type = action
         elif fish_x < bar_left + 0.01:
             # Panic: Fish is escaping left
-            self.controller.mouse_release()
-        elif abs(error) < deadzone and abs(self._bar_velocity) < 0.01:
+            action = 'release'
+            if not (action_cooldown and action != self._last_action_type):
+                self.controller.mouse_release()
+                self._last_action_time = time.time()
+                self._last_action_type = action
+        elif abs(error) < hysteresis_deadzone and abs(self._bar_velocity) < 0.01:
             # Stable
-            self.controller.rapid_click(count=1, interval=0.0)
-        elif pd_score > 0.01:
+            action = 'rapid_click'
+            if not (action_cooldown and action != self._last_action_type):
+                self.controller.rapid_click(count=1, interval=0.0)
+                self._last_action_time = time.time()
+                self._last_action_type = action
+        elif pd_score > pd_deadband:
             # Need more upward/rightward force
-            if pd_score < 0.15:
-                self.controller.mouse_hold()
-                time.sleep(0.01) # Micro-pulse
-                self.controller.mouse_release()
-            else:
-                self.controller.mouse_hold()
-        elif pd_score < -0.01:
+            action = 'hold'
+            if not (action_cooldown and action != self._last_action_type):
+                if pd_score < 0.15:
+                    self.controller.mouse_hold()
+                    time.sleep(0.01) # Micro-pulse
+                    self.controller.mouse_release()
+                else:
+                    self.controller.mouse_hold()
+                self._last_action_time = time.time()
+                self._last_action_type = action
+        elif pd_score < -pd_deadband:
             # Need less force / let it fall
-            if pd_score > -0.15:
-                self.controller.mouse_release()
-                time.sleep(0.01) # Micro-drift
-            else:
-                self.controller.mouse_release()
+            action = 'release'
+            if not (action_cooldown and action != self._last_action_type):
+                if pd_score > -0.15:
+                    self.controller.mouse_release()
+                    time.sleep(0.01) # Micro-drift
+                else:
+                    self.controller.mouse_release()
+                self._last_action_time = time.time()
+                self._last_action_type = action
         else:
             # Hover
-            self.controller.rapid_click(count=1, interval=0.0)
+            action = 'rapid_click'
+            if not (action_cooldown and action != self._last_action_type):
+                self.controller.rapid_click(count=1, interval=0.0)
+                self._last_action_time = time.time()
+                self._last_action_type = action
 
     def _do_complete(self, settings):
         """
