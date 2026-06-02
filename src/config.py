@@ -38,6 +38,13 @@ class ColorProfile:
     fish_hsv_high: List[int] = field(default_factory=lambda: [170, 255, 255])
     bar_hsv_low: List[int] = field(default_factory=lambda: [40, 80, 100])
     bar_hsv_high: List[int] = field(default_factory=lambda: [90, 255, 255])
+    
+    # New: Targeted color feedback for smarter behavior
+    on_target_hsv_low: List[int] = field(default_factory=lambda: [40, 80, 100])   # Usually green
+    on_target_hsv_high: List[int] = field(default_factory=lambda: [90, 255, 255])
+    off_target_hsv_low: List[int] = field(default_factory=lambda: [15, 80, 100])  # Usually orange/white
+    off_target_hsv_high: List[int] = field(default_factory=lambda: [35, 255, 255])
+    
     bar_brightness_threshold: int = 80
     description: str = ""
     bar_roi: Optional[ROIBounds] = None
@@ -165,6 +172,27 @@ class ConfigManager:
         profile_path = os.path.join(self.profiles_dir, f"{profile.name}.json")
         with open(profile_path, "w") as f:
             f.write(json.dumps(asdict(profile), indent=2))
+
+    def delete_profile(self, name: str) -> bool:
+        """Delete a color profile by name.
+
+        Args:
+            name: Profile name (without .json extension).
+
+        Returns:
+            True if deleted, False otherwise.
+        """
+        if name == "default":
+            return False  # Prevent deleting the default profile
+
+        profile_path = os.path.join(self.profiles_dir, f"{name}.json")
+        if os.path.exists(profile_path):
+            try:
+                os.remove(profile_path)
+                return True
+            except OSError:
+                return False
+        return False
 
     def list_profiles(self) -> List[str]:
         """List all available profile names.

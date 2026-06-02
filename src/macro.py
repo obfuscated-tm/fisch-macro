@@ -110,6 +110,9 @@ class MacroEngine:
         self._reel_max_no_detection = 20  # ~1 second at 50ms intervals
         self._last_progress = 0.0
         self._progress_stuck_count = 0
+        self.last_on_target = False
+        self._last_fish_x = None
+        self._fish_velocity = 0.0
 
     # ─── Callback Registration ────────────────────────────────────
 
@@ -378,40 +381,69 @@ class MacroEngine:
         # Reset no-detection counter since bar is visible
         self._reel_no_detection_count = 0
 
-        # Track progress
-        if result.progress > 0.0:
-            self._last_progress = result.progress
+        # Track progress and target status
+        self._last_progress = result.progress
+        self.last_on_target = result.on_target
 
         # === Core reeling algorithm ===
         fish_x = result.fish_x
         bar_left = result.bar_left
         bar_right = result.bar_right
+        on_target = result.on_target
 
         if fish_x is None or bar_left is None or bar_right is None:
             # Can't see fish or bar — hold position with rapid clicking
             self.controller.rapid_click(count=2, interval=0.03)
             return
 
+        # Calculate fish velocity for prediction
+        if self._last_fish_x is not None:
+            self._fish_velocity = (fish_x - self._last_fish_x)
+        self._last_fish_x = fish_x
+
+        # Predicted fish position (half a tick ahead)
+        predicted_fish_x = fish_x + (self._fish_velocity * 0.5)
+
         bar_center = (bar_left + bar_right) / 2.0
         bar_width = bar_right - bar_left
-        dead_zone = bar_width * 0.15  # 15% of bar width = close enough
+        
+        # Distance from center (-1.0 to 1.0 relative to bar half-width)
+        dist_from_center = (predicted_fish_x - bar_center) / (bar_width / 2.0)
+        
+        # Adaptive dead zone: tighter if we are moving away or off-target
+        dead_zone = 0.15 if on_target else 0.05
 
-        if fish_x > bar_right + 0.02:
-            # Fish is to the RIGHT of our bar → hold mouse to move bar right
+        if predicted_fish_x > bar_right + 0.01:
+            # Fish is way to the RIGHT → hard hold
             self.controller.mouse_hold()
-        elif fish_x < bar_left - 0.02:
-            # Fish is to the LEFT of our bar → release mouse to move bar left
+        elif predicted_fish_x < bar_left - 0.01:
+            # Fish is way to the LEFT → hard release
             self.controller.mouse_release()
-        elif fish_x > bar_center + dead_zone:
-            # Fish is right of center but inside bar → small nudge right
-            self.controller.mouse_hold()
-            time.sleep(0.03)
-            self.controller.mouse_release()
-        elif fish_x < bar_center - dead_zone:
-            # Fish is left of center but inside bar → let it drift left
-            self.controller.mouse_release()
+        elif not on_target:
+            # Inside bar but color says we are not "on target"
+            # Use small proportional nudges to find the center
+            if dist_from_center > 0:
+                self.controller.mouse_hold()
+                time.sleep(0.04)
+                self.controller.mouse_release()
+            else:
+                self.controller.mouse_release()
+                time.sleep(0.02)
+        elif abs(dist_from_center) > dead_zone:
+            # Within bar but not centered enough
+            if dist_from_center > 0:
+                # Nudge right
+                hold_time = min(0.05, 0.02 + (dist_from_center * 0.03))
+                self.controller.mouse_hold()
+                time.sleep(hold_time)
+                self.controller.mouse_release()
+            else:
+                # Let it drift left (gravity)
+                wait_time = min(0.04, 0.01 + (abs(dist_from_center) * 0.03))
+                self.controller.mouse_release()
+                time.sleep(wait_time)
         else:
-            # Fish is centered — hold position
+            # Centered and on target — stay here
             self.controller.rapid_click(count=2, interval=0.03)
 
     def _do_complete(self, settings):

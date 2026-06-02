@@ -34,6 +34,7 @@ class DetectionResult:
     fish_x: Optional[float] = None       # 0.0–1.0 normalized position in bar
     bar_left: Optional[float] = None     # 0.0–1.0 control bar left edge
     bar_right: Optional[float] = None    # 0.0–1.0 control bar right edge
+    on_target: bool = False              # Whether the bar is currently over the fish (color-based)
     progress: float = 0.0                # 0.0–1.0 progress bar fill
     shake_pos: Optional[Tuple[int, int]] = None  # (x, y) screen coords of shake button
     debug_frame: Optional[np.ndarray] = None     # Annotated frame for GUI
@@ -170,10 +171,11 @@ class Detector:
         s_channel = hsv_frame[:, :, 1]
 
         # Very bright pixels (particle effects, glowing edges)
-        bright_mask = v_channel > 240
+        # Only strip if they are ALSO low saturation (to avoid stripping the fish icon)
+        bright_mask = (v_channel > 240) & (s_channel < 80)
 
         # Low-saturation bright pixels (white flashes / bloom)
-        flash_mask = (v_channel > 200) & (s_channel < 30)
+        flash_mask = (v_channel > 200) & (s_channel < 40)
 
         vfx_mask = bright_mask | flash_mask
         return (~vfx_mask).astype(np.uint8) * 255
@@ -229,6 +231,9 @@ class Detector:
 
         profile = self._config.get_active_profile()
         hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+        
+        # Use a more targeted VFX filter for the fish to avoid losing it
+        # The fish icon is usually saturated, so we avoid stripping high-saturation pixels.
         vfx_ok = self._filter_vfx(hsv)
 
         color_mask = cv2.inRange(
@@ -236,10 +241,17 @@ class Detector:
             np.array(profile.fish_hsv_low, dtype=np.uint8),
             np.array(profile.fish_hsv_high, dtype=np.uint8),
         )
+        
+        # Combine with VFX mask, but be lenient
         mask = cv2.bitwise_and(color_mask, vfx_ok)
+        
+        # If the combined mask is too empty, fall back to just the color mask 
+        # (in case VFX filter is too aggressive for the fish icon)
+        if cv2.countNonZero(mask) < 10:
+            mask = color_mask
 
-        # Morphological cleanup
-        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+        # Smaller kernel for morphological cleanup to preserve small fish icon features
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
         mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
         mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
 
@@ -248,7 +260,7 @@ class Detector:
             return None
 
         # Largest contour that passes noise filter
-        valid = [c for c in contours if cv2.contourArea(c) > 20]
+        valid = [c for c in contours if cv2.contourArea(c) > 10]
         if not valid:
             return None
 
@@ -359,6 +371,53 @@ class Detector:
         self.logger.debug("Brightness fallback bar: %.2f–%.2f", left, right)
         return (float(np.clip(left, 0.0, 1.0)),
                 float(np.clip(right, 0.0, 1.0)))
+
+    def detect_on_target(self, frame: np.ndarray, left: float, right: float) -> bool:
+        """Determine if the bar is 'on target' (active) based on color profile.
+
+        Analyzes the region between left and right boundaries for the active color.
+        """
+        if frame is None or frame.size == 0 or left is None or right is None:
+            return False
+
+        profile = self._config.get_active_profile()
+        h, w = frame.shape[:2]
+        lx, rx = int(left * w), int(right * w)
+        if rx <= lx:
+            return False
+
+        # Extract the bar interior
+        bar_roi = frame[:, lx:rx]
+        hsv = cv2.cvtColor(bar_roi, cv2.COLOR_BGR2HSV)
+
+        # 1. Check for 'On Target' color (usually green)
+        on_mask = cv2.inRange(
+            hsv,
+            np.array(profile.on_target_hsv_low, dtype=np.uint8),
+            np.array(profile.on_target_hsv_high, dtype=np.uint8),
+        )
+        
+        # 2. Check for 'Off Target' color (usually orange/white)
+        off_mask = cv2.inRange(
+            hsv,
+            np.array(profile.off_target_hsv_low, dtype=np.uint8),
+            np.array(profile.off_target_hsv_high, dtype=np.uint8),
+        )
+
+        on_pixels = cv2.countNonZero(on_mask)
+        off_pixels = cv2.countNonZero(off_mask)
+        total_pixels = bar_roi.shape[0] * bar_roi.shape[1]
+        
+        # Preference: if we see significantly more on-target color than off-target, it's on.
+        # This handles cases where the bar might have mixed colors during transition.
+        if on_pixels > off_pixels and (on_pixels / total_pixels) > 0.1:
+            return True
+        
+        # Fallback to the original logic if off_target isn't well-defined
+        if (on_pixels / total_pixels) > 0.3:
+            return True
+
+        return False
 
     # ---- progress bar --------------------------------------------------
 
@@ -478,6 +537,10 @@ class Detector:
 
         bar_left = bar_bounds[0] if bar_bounds else None
         bar_right = bar_bounds[1] if bar_bounds else None
+        
+        on_target = False
+        if bar_left is not None and bar_right is not None:
+            on_target = self.detect_on_target(bar_frame, bar_left, bar_right)
 
         # Progress
         progress_frame = self.capture_roi(settings.progress_roi)
@@ -488,6 +551,7 @@ class Detector:
             fish_x=fish_x,
             bar_left=bar_left,
             bar_right=bar_right,
+            on_target=on_target,
             progress=progress,
         )
 
@@ -532,13 +596,19 @@ class Detector:
             lx = int(result.bar_left * w)
             rx = int(result.bar_right * w)
             overlay = vis.copy()
-            cv2.rectangle(overlay, (lx, 0), (rx, h), (0, 255, 0), -1)
+            
+            # Use bright green for on-target, yellow for off-target
+            color = (0, 255, 0) if result.on_target else (0, 255, 255)
+            
+            cv2.rectangle(overlay, (lx, 0), (rx, h), color, -1)
             cv2.addWeighted(overlay, 0.25, vis, 0.75, 0, vis)
-            cv2.line(vis, (lx, 0), (lx, h), (0, 255, 0), 2)
-            cv2.line(vis, (rx, 0), (rx, h), (0, 255, 0), 2)
+            cv2.line(vis, (lx, 0), (lx, h), color, 2)
+            cv2.line(vis, (rx, 0), (rx, h), color, 2)
+            
+            status_text = "ON TARGET" if result.on_target else "OFF TARGET"
             cv2.putText(
-                vis, f"Bar: {result.bar_left:.2f}-{result.bar_right:.2f}",
-                (lx + 4, h - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 255, 0), 1,
+                vis, f"Bar: {result.bar_left:.2f}-{result.bar_right:.2f} ({status_text})",
+                (lx + 4, h - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.4, color, 1,
             )
 
         # Progress bar — coloured strip at the bottom

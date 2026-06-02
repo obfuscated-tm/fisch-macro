@@ -79,6 +79,9 @@ class MacroGUI:
 
         # Build the GUI
         self.root = tk.Tk()
+
+        # Initialize common variables (must be after tk.Tk())
+        self.profile_var = tk.StringVar(value=self.settings.active_profile)
         self.root.title("Fisch Macro")
         self.root.geometry("420x600")
         self.root.minsize(380, 500)
@@ -282,6 +285,12 @@ class MacroGUI:
             style="CardDim.TLabel",
         )
         self.status_detail.pack(anchor=tk.W)
+
+        self.on_target_label = ttk.Label(
+            status_text, text="",
+            style="Card.TLabel", font=("Helvetica Neue", 11, "bold")
+        )
+        self.on_target_label.pack(anchor=tk.W)
 
         # ── Start/Stop Button ──
         self.start_button = tk.Button(
@@ -542,7 +551,6 @@ class MacroGUI:
         selector_frame.pack(fill=tk.X, pady=(8, 0))
 
         profiles = self.config.list_profiles()
-        self.profile_var = tk.StringVar(value=self.settings.active_profile)
         self.profile_combo = ttk.Combobox(
             selector_frame,
             textvariable=self.profile_var,
@@ -552,6 +560,20 @@ class MacroGUI:
         )
         self.profile_combo.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 8))
         self.profile_combo.bind("<<ComboboxSelected>>", self._on_profile_change)
+
+        delete_profile_btn = tk.Button(
+            selector_frame,
+            text="🗑",
+            font=("Helvetica Neue", 12),
+            bg=COLORS["danger"],
+            fg="#ffffff",
+            activebackground="#c73a50",
+            relief=tk.FLAT,
+            cursor="hand2",
+            width=3,
+            command=self._delete_profile,
+        )
+        delete_profile_btn.pack(side=tk.RIGHT)
 
         save_as_profile_btn = tk.Button(
             pf_inner,
@@ -565,40 +587,6 @@ class MacroGUI:
             command=self._save_calibration_as_profile,
         )
         save_as_profile_btn.pack(fill=tk.X, pady=(10, 0))
-
-        # ROI Settings
-        roi_frame = ttk.Frame(tab, style="Card.TFrame")
-        roi_frame.pack(fill=tk.X, padx=8, pady=4)
-
-        roi_inner = ttk.Frame(roi_frame, style="Card.TFrame")
-        roi_inner.pack(fill=tk.X, padx=16, pady=12)
-
-        ttk.Label(roi_inner, text="📐 Bar Region (% of window)", style="Card.TLabel",
-                  font=("Helvetica Neue", 13, "bold")).pack(anchor=tk.W)
-
-        roi_grid = ttk.Frame(roi_inner, style="Card.TFrame")
-        roi_grid.pack(fill=tk.X, pady=(8, 0))
-        roi_grid.columnconfigure((0, 1, 2, 3), weight=1)
-
-        roi = self.settings.bar_roi
-        self.roi_vars = {
-            "x_start": tk.DoubleVar(value=roi.x_start),
-            "x_end": tk.DoubleVar(value=roi.x_end),
-            "y_start": tk.DoubleVar(value=roi.y_start),
-            "y_end": tk.DoubleVar(value=roi.y_end),
-        }
-
-        for i, (key, label) in enumerate([
-            ("x_start", "X Start"),
-            ("x_end", "X End"),
-            ("y_start", "Y Start"),
-            ("y_end", "Y End"),
-        ]):
-            ttk.Label(roi_grid, text=label, style="CardDim.TLabel").grid(
-                row=0, column=i, padx=2, sticky=tk.W
-            )
-            entry = ttk.Entry(roi_grid, textvariable=self.roi_vars[key], width=6)
-            entry.grid(row=1, column=i, padx=2, pady=2, sticky=tk.EW)
 
         # HSV Color Preview (informational)
         hsv_frame = ttk.Frame(tab, style="Card.TFrame")
@@ -617,20 +605,6 @@ class MacroGUI:
         )
         self.hsv_info_label.pack(anchor=tk.W, pady=(4, 0))
         self._update_hsv_display()
-
-        # Auto-calibrate button
-        auto_cal_btn = tk.Button(
-            tab,
-            text="🔧  Auto Calibrate (start minigame first!)",
-            font=("Helvetica Neue", 12),
-            bg=COLORS["accent"],
-            fg="#ffffff",
-            activebackground="#c73a50",
-            relief=tk.FLAT,
-            cursor="hand2",
-            command=self._auto_calibrate,
-        )
-        auto_cal_btn.pack(fill=tk.X, padx=8, pady=(8, 4))
 
         # Interactive calibrate button
         interactive_cal_btn = tk.Button(
@@ -791,16 +765,28 @@ class MacroGUI:
         self._update_hsv_display()
         self._append_log(f"Loaded rod profile: {profile_name}")
 
-    def _sync_bar_roi_from_entries(self):
-        """Copy manual bar ROI entry values into settings."""
-        from src.config import ROIBounds
+    def _delete_profile(self):
+        """Delete the currently selected profile."""
+        name = self.profile_var.get()
+        if name == "default":
+            messagebox.showwarning("Cannot Delete", "The 'default' profile cannot be deleted.")
+            return
 
-        self.settings.bar_roi = ROIBounds(
-            x_start=self.roi_vars["x_start"].get(),
-            x_end=self.roi_vars["x_end"].get(),
-            y_start=self.roi_vars["y_start"].get(),
-            y_end=self.roi_vars["y_end"].get(),
-        )
+        if not messagebox.askyesno("Delete Profile", f"Are you sure you want to delete the '{name}' profile?"):
+            return
+
+        if self.config.delete_profile(name):
+            self._append_log(f"Deleted rod profile: {name}")
+            # Switch back to default
+            self.profile_var.set("default")
+            self.profile_combo.configure(values=self.config.list_profiles())
+            self._on_profile_change(None)
+        else:
+            messagebox.showerror("Error", f"Could not delete profile '{name}'.")
+
+    def _sync_bar_roi_from_entries(self):
+        """No longer used as manual entries were removed."""
+        pass
 
     def _store_current_calibration_in_profile(self, profile, copy_active_colors=True):
         """Persist current colors plus all ROI bounds into a rod profile."""
@@ -860,65 +846,13 @@ class MacroGUI:
         self._update_hsv_display()
         self._append_log(f"Saved rod profile: {safe_name}")
 
-    def _auto_calibrate(self):
-        """Run auto-calibration on the current minigame bar."""
-        try:
-            from src.calibrator import Calibrator
-
-            bounds = self.window_tracker.get_roblox_bounds()
-            if bounds is None:
-                messagebox.showwarning(
-                    "Roblox Not Found",
-                    "Could not find the Roblox window.",
-                )
-                return
-
-            scale = self.window_tracker.get_scale_factor()
-            self.engine.detector.set_window_info(bounds, scale)
-
-            calibrator = Calibrator(self.engine.detector, self.config)
-            bar_frame = self.engine.detector.capture_roi(self.settings.bar_roi)
-
-            if bar_frame is None:
-                messagebox.showwarning(
-                    "Capture Failed",
-                    "Could not capture the bar region. Is Roblox visible?",
-                )
-                return
-
-            result = calibrator.auto_detect_colors(bar_frame)
-            if result is None:
-                messagebox.showwarning(
-                    "Calibration Failed",
-                    "Could not detect colors. Make sure the fishing minigame "
-                    "is active on screen.",
-                )
-                return
-
-            # Update the active profile
-            profile = self.config.get_active_profile()
-            profile.fish_hsv_low = result["fish_hsv_low"]
-            profile.fish_hsv_high = result["fish_hsv_high"]
-            profile.bar_hsv_low = result["bar_hsv_low"]
-            profile.bar_hsv_high = result["bar_hsv_high"]
-            self._store_current_calibration_in_profile(profile)
-            self.config.save_profile(profile)
-
-            self._update_hsv_display()
-            self._append_log("Auto-calibration complete ✓")
-            messagebox.showinfo(
-                "Calibration Complete",
-                "Colors have been detected and saved to the active profile.",
-            )
-        except Exception as e:
-            logger.error(f"Auto-calibration error: {e}", exc_info=True)
-            messagebox.showerror("Calibration Error", str(e))
-
     def _interactive_calibrate(self):
         """Open the screenshot-based eyedropper and ROI calibration window."""
         try:
             from src.interactive_calibrator import InteractiveCalibrator
 
+            # Force fresh bounds lookup
+            self.window_tracker.invalidate_cache()
             bounds = self.window_tracker.get_roblox_bounds()
             if bounds is None:
                 messagebox.showwarning(
@@ -984,12 +918,8 @@ class MacroGUI:
         self.kill_button.config(text="EMERGENCY STOP")
 
     def _refresh_roi_fields(self):
-        """Refresh calibration entry fields from current settings."""
-        roi = self.settings.bar_roi
-        self.roi_vars["x_start"].set(roi.x_start)
-        self.roi_vars["x_end"].set(roi.x_end)
-        self.roi_vars["y_start"].set(roi.y_start)
-        self.roi_vars["y_end"].set(roi.y_end)
+        """No longer used as manual entries were removed."""
+        pass
 
     def _update_hsv_display(self):
         """Update the HSV color range display."""
@@ -1092,13 +1022,24 @@ class MacroGUI:
 
     def _periodic_update(self):
         """Periodic tasks: update session time, check window status."""
-        # Update session time
+        # Update session time and target status
         if self.engine.is_running():
             duration = self.engine.stats.session_duration
             hours = int(duration // 3600)
             minutes = int((duration % 3600) // 60)
             seconds = int(duration % 60)
             self.session_time.config(text=f"{hours:02d}:{minutes:02d}:{seconds:02d}")
+            
+            # Show "On Target" status if reeling
+            if self.engine.state.value == "Reeling":
+                if self.engine.last_on_target:
+                    self.on_target_label.config(text="🎯 ON TARGET", foreground=COLORS["accent_green"])
+                else:
+                    self.on_target_label.config(text="⚠️ OFF TARGET", foreground=COLORS["accent_yellow"])
+            else:
+                self.on_target_label.config(text="")
+        else:
+            self.on_target_label.config(text="")
 
         # Update window detection status
         bounds = self.window_tracker.get_roblox_bounds()
