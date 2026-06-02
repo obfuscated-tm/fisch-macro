@@ -31,6 +31,7 @@ class DetectionResult:
     """Result bundle returned by :meth:`Detector.detect_all`."""
 
     bar_active: bool = False
+    bite_confirmed: bool = False         # True only if bar shape or fish icon is seen
     fish_x: Optional[float] = None       # 0.0–1.0 normalized position in bar
     bar_left: Optional[float] = None     # 0.0–1.0 control bar left edge
     bar_right: Optional[float] = None    # 0.0–1.0 control bar right edge
@@ -533,14 +534,19 @@ class Detector:
         progress_frame = self.capture_roi(settings.progress_roi)
         progress = self.detect_progress(progress_frame) if progress_frame is not None else 0.0
         
-        # A minigame is active if we see the bar shape, OR the fish, OR some progress
-        active = shape_active or (fish_x is not None) or (progress > 0.0)
+        # A bite is CONFIRMED if we see the bar shape or the fish icon.
+        # This prevents "ghost" reeling from text in the progress bar area.
+        bite_confirmed = shape_active or (fish_x is not None)
+        
+        # A minigame is active if a bite was confirmed OR we still see progress
+        # (to keep reeling if the bar/fish briefly flickers or is covered).
+        active = bite_confirmed or (progress > 0.0)
 
         if not active:
             # Check for a shake button instead
             shake_frame = self.capture_roi(settings.shake_roi)
             shake_pos = self.detect_shake_button(shake_frame) if shake_frame is not None else None
-            return DetectionResult(bar_active=False, shake_pos=shake_pos)
+            return DetectionResult(bar_active=False, bite_confirmed=False, shake_pos=shake_pos)
 
         # --- Bar is active — run full detection ---
         bar_bounds = self.detect_control_bar(bar_frame)
@@ -554,6 +560,7 @@ class Detector:
 
         result = DetectionResult(
             bar_active=True,
+            bite_confirmed=bite_confirmed,
             fish_x=fish_x,
             bar_left=bar_left,
             bar_right=bar_right,

@@ -113,6 +113,8 @@ class MacroEngine:
         self.last_on_target = False
         self._last_fish_x = None
         self._fish_velocity = 0.0
+        self._last_bar_center = None
+        self._bar_velocity = 0.0
 
     # ─── Callback Registration ────────────────────────────────────
 
@@ -307,9 +309,9 @@ class MacroEngine:
 
         result = self.detector.detect_all()
 
-        if result.bar_active:
+        if result.bite_confirmed:
             # Minigame bar detected — fish has bitten!
-            logger.info("Minigame bar detected — fish on the line!")
+            logger.info("Bite confirmed — fish on the line!")
             self._emit_log("🐟 Fish on the line!")
             self._reel_no_detection_count = 0
             self._last_progress = 0.0
@@ -332,7 +334,7 @@ class MacroEngine:
 
         result = self.detector.detect_all()
 
-        if result.bar_active:
+        if result.bite_confirmed:
             # Bar appeared — transition to reeling
             self._emit_log("🐟 Fish on the line!")
             self._reel_no_detection_count = 0
@@ -370,11 +372,14 @@ class MacroEngine:
         if not result.bar_active:
             self._reel_no_detection_count += 1
             if self._reel_no_detection_count > self._reel_max_no_detection:
-                # Bar has been gone for ~1 second — minigame is over
+                # Bar has been gone for ~1.5 seconds — minigame is over
                 self.controller.mouse_release()
-
-                if self._last_progress > 0.9:
-                    self.stats.record_catch(perfect=(self._last_progress > 0.98))
+                
+                # Success criteria: 
+                # 1. Final progress is very high (standard catch)
+                # 2. Progress WAS very high just before it disappeared (text might have covered final frames)
+                if result.progress > 0.95 or self._last_progress > 0.95:
+                    self.stats.record_catch(perfect=(max(result.progress, self._last_progress) > 0.98))
                     self._emit_log("✅ Fish caught!")
                 else:
                     self.stats.record_fail()
@@ -384,8 +389,12 @@ class MacroEngine:
                 self._set_state(MacroState.COMPLETE)
                 return
             else:
-                # Might be a detection glitch — hold position briefly
-                self.controller.rapid_click(count=2, interval=0.03)
+                # Bar flickered or covered by text?
+                # If we were at high progress, assume it's still reeling or ending
+                if self._last_progress > 0.9:
+                    self.controller.mouse_release() # safer at the end
+                else:
+                    self.controller.rapid_click(count=1, interval=0.0)
                 return
 
         # Reset no-detection counter since bar is visible
@@ -406,59 +415,65 @@ class MacroEngine:
             self.controller.rapid_click(count=2, interval=0.03)
             return
 
-        # 1. Dampened Velocity Tracking (Low-pass filter to reduce jitter)
-        alpha = 0.4 
+        # 1. Tracking and Velocities
+        # Use low-pass filtering for both fish and bar to filter out capture noise
+        alpha = 0.35
+        
+        # Fish velocity
         if self._last_fish_x is not None:
-            inst_velocity = (fish_x - self._last_fish_x)
-            self._fish_velocity = (self._fish_velocity * (1.0 - alpha)) + (inst_velocity * alpha)
-        else:
-            self._fish_velocity = 0.0
+            inst_fish_v = (fish_x - self._last_fish_x)
+            self._fish_velocity = (self._fish_velocity * (1.0 - alpha)) + (inst_fish_v * alpha)
         self._last_fish_x = fish_x
-
-        # 2. Prediction (Slightly reduced to avoid over-correction)
-        predicted_fish_x = fish_x + (self._fish_velocity * 0.2)
-
+        
+        # Bar velocity
         bar_center = (bar_left + bar_right) / 2.0
-        bar_width = bar_right - bar_left
+        if self._last_bar_center is not None:
+            inst_bar_v = (bar_center - self._last_bar_center)
+            self._bar_velocity = (self._bar_velocity * (1.0 - alpha)) + (inst_bar_v * alpha)
+        self._last_bar_center = bar_center
+
+        # 2. PD-Control Decision Logic (Proportional-Derivative)
+        # error: how far the fish is from the bar center
+        # velocity_diff: how fast the fish is moving relative to the bar
+        error = fish_x - bar_center
+        velocity_diff = self._fish_velocity - self._bar_velocity
         
-        # 3. Dynamic Centering Logic
-        # Distance from center (-1.0 to 1.0)
-        dist_from_center = (predicted_fish_x - bar_center) / (bar_width / 2.0)
+        # We want to hold if:
+        # 1. The fish is to the right (error > 0)
+        # 2. The fish is moving right faster than the bar (velocity_diff > 0)
+        # 3. The bar is falling too fast (bar_velocity << 0)
         
-        # Buffer zones
-        dead_zone = 0.08 if on_target else 0.03
+        # Combined PD score
+        # Kp: Proportional gain (chase the error)
+        # Kd: Derivative gain (dampen the movement / counteract velocity)
+        kp = 1.0
+        kd = 5.0 # High damping to prevent swaying
         
-        if predicted_fish_x > bar_right - 0.02:
-            # Fish is near right edge -> hard hold
+        pd_score = (kp * error) + (kd * velocity_diff)
+        
+        # Deadzone based on target status
+        deadzone = 0.04 if on_target else 0.01
+        
+        if fish_x > bar_right - 0.01:
+            # Panic: Fish is escaping right
             self.controller.mouse_hold()
-        elif predicted_fish_x < bar_left + 0.02:
-            # Fish is near left edge -> hard release
+        elif fish_x < bar_left + 0.01:
+            # Panic: Fish is escaping left
             self.controller.mouse_release()
-        elif abs(dist_from_center) > dead_zone:
-            # Not centered enough - use proportional micro-adjustments
-            if dist_from_center > 0:
-                # Need to move RIGHT
-                if dist_from_center < 0.4:
-                    # Micro-nudge right
-                    self.controller.mouse_hold()
-                    time.sleep(0.015) # Very brief hold
-                    self.controller.mouse_release()
-                else:
-                    self.controller.mouse_hold()
-            else:
-                # Need to move LEFT
-                if abs(dist_from_center) < 0.4:
-                    # Micro-drift left
-                    self.controller.mouse_release()
-                    time.sleep(0.01) # Very brief release
-                else:
-                    self.controller.mouse_release()
+        elif abs(error) < deadzone and abs(self._bar_velocity) < 0.01:
+            # Perfectly centered and stable
+            self.controller.rapid_click(count=1, interval=0.0)
+        elif pd_score > 0.01:
+            # Need more upward/rightward force
+            self.controller.mouse_hold()
+        elif pd_score < -0.01:
+            # Need less force / let it fall
+            self.controller.mouse_release()
         else:
-            # 4. Precision Maintenance (Hovering)
-            # Biased slightly towards holding to combat gravity
-            if dist_from_center > -0.05:
+            # In the sweet spot, maintain position
+            if bar_center < fish_x:
                 self.controller.mouse_hold()
-                time.sleep(0.01)
+                time.sleep(0.01) # Micro-nudge
                 self.controller.mouse_release()
             else:
                 self.controller.mouse_release()

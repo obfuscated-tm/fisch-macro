@@ -116,12 +116,27 @@ class MacroGUI:
         )
         self.root.bind_all("<KeyRelease-F6>", lambda _event: self._toggle_from_hotkey())
 
+        # Auto-save setup
+        self._setup_auto_save()
+
         # Periodic UI update
         self._update_interval = 500  # ms
         self._schedule_update()
 
         # Handle window close
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
+
+    def _setup_auto_save(self):
+        """Add traces to all settings variables for automatic saving."""
+        for var in [
+            self.cast_time_var,
+            self.recast_delay_var,
+            self.scan_interval_var,
+            self.auto_recast_var,
+            self.shake_enabled_var,
+            self.profile_var,
+        ]:
+            var.trace_add("write", lambda *args: self._save_settings())
 
     # ─── Style Configuration ──────────────────────────────────────
 
@@ -459,21 +474,6 @@ class MacroGUI:
         )
         rebind_btn.pack(side=tk.RIGHT)
 
-        # ── Save Button ──
-        save_btn = tk.Button(
-            content,
-            text="💾  Save Settings",
-            font=("Helvetica Neue", 13, "bold"),
-            bg=COLORS["accent_blue"],
-            fg="#ffffff",
-            activebackground="#3aa3d7",
-            relief=tk.FLAT,
-            cursor="hand2",
-            height=2,
-            command=self._save_settings,
-        )
-        save_btn.pack(fill=tk.X, padx=12, pady=(16, 8))
-
     def _add_section_header(self, parent, text):
         """Add a section header label."""
         frame = ttk.Frame(parent)
@@ -725,20 +725,20 @@ class MacroGUI:
         self._toggle_macro()
 
     def _save_settings(self):
-        """Save current settings to disk."""
-        from src.config import ROIBounds
+        """Save current settings to disk (triggered by auto-save)."""
+        try:
+            self.settings.cast_hold_time = self.cast_time_var.get()
+            self.settings.recast_delay = self.recast_delay_var.get()
+            self.settings.scan_interval_ms = int(self.scan_interval_var.get())
+            self.settings.auto_recast = self.auto_recast_var.get()
+            self.settings.shake_enabled = self.shake_enabled_var.get()
+            self.settings.active_profile = self.profile_var.get()
 
-        self.settings.cast_hold_time = self.cast_time_var.get()
-        self.settings.recast_delay = self.recast_delay_var.get()
-        self.settings.scan_interval_ms = int(self.scan_interval_var.get())
-        self.settings.auto_recast = self.auto_recast_var.get()
-        self.settings.shake_enabled = self.shake_enabled_var.get()
-        self.settings.active_profile = self.profile_var.get()
-
-        self.config.save_settings(self.settings)
-        self.engine.controller.setup_killswitch(self.settings.killswitch_key)
-        self._refresh_killswitch_labels()
-        self._append_log("Settings saved ✓")
+            self.config.save_settings(self.settings)
+            self.engine.controller.setup_killswitch(self.settings.killswitch_key)
+            self._refresh_killswitch_labels()
+        except Exception as e:
+            logger.error(f"Auto-save settings failed: {e}")
 
     def _save_calibration(self):
         """Save current calibration settings into the selected rod profile."""
