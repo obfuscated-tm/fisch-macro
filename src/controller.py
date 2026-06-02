@@ -68,7 +68,11 @@ class Controller:
 
         # Stop any existing listener
         if self._listener is not None:
-            self._listener.stop()
+            try:
+                self._listener.stop()
+            except Exception:
+                pass
+            self._listener = None
 
         self._listener = keyboard.Listener(on_press=self._on_key_press)
         self._listener.daemon = True
@@ -195,6 +199,16 @@ class Controller:
 
         Clears the killed flag and sets the running flag.
         """
+        # pynput listeners cannot be restarted after returning False from
+        # _on_key_press, so recreate it when a previous killswitch activation
+        # stopped the listener.
+        if self._listener is None or not self._listener.is_alive():
+            key_name = getattr(self._killswitch_key, "name", None)
+            if key_name is None:
+                key_name = getattr(self._killswitch_key, "char", None)
+            if key_name:
+                self.setup_killswitch(key_name)
+
         self._killed.clear()
         self._running.set()
         self.logger.info("Controller started.")

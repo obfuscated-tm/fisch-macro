@@ -46,6 +46,7 @@ class InteractiveCalibrator(tk.Toplevel):
         self._take_screenshot()
         self._build_ui()
         self._bind_events()
+        self._draw_existing_rois()
 
     def _take_screenshot(self):
         """Take a full screen screenshot and prepare it for the canvas."""
@@ -139,6 +140,28 @@ class InteractiveCalibrator(tk.Toplevel):
             self.toolbar, text="", fg="#a0aabf", bg=COLORS["bg_card"], font=("Helvetica Neue", 12)
         )
         self.info_label.pack(side=tk.TOP, pady=(0, 5))
+
+    def _draw_existing_rois(self):
+        """Draw current saved ROI boxes as a starting point."""
+        window_bounds = self.window_tracker.get_roblox_bounds()
+        if not window_bounds:
+            return
+
+        roi_styles = {
+            "bar_roi": (self.settings.bar_roi, "green"),
+            "progress_roi": (self.settings.progress_roi, "blue"),
+            "shake_roi": (self.settings.shake_roi, "red"),
+        }
+
+        for mode, (roi, color) in roi_styles.items():
+            x0 = window_bounds.x + window_bounds.width * roi.x_start
+            y0 = window_bounds.y + window_bounds.height * roi.y_start
+            x1 = window_bounds.x + window_bounds.width * roi.x_end
+            y1 = window_bounds.y + window_bounds.height * roi.y_end
+            rect_id = self.canvas.create_rectangle(
+                x0, y0, x1, y1, outline=color, width=2, dash=(6, 4)
+            )
+            self.drawn_rects[mode] = rect_id
 
     def _bind_events(self):
         self.canvas.bind("<ButtonPress-1>", self._on_press)
@@ -266,14 +289,41 @@ class InteractiveCalibrator(tk.Toplevel):
         
         if self.mode == "bar_roi":
             self.settings.bar_roi = roi
+            threshold = self._estimate_active_bar_threshold(rx, ry, rw, rh)
+            if threshold is not None:
+                self.profile.bar_brightness_threshold = threshold
         elif self.mode == "shake_roi":
             self.settings.shake_roi = roi
         elif self.mode == "progress_roi":
             self.settings.progress_roi = roi
             
+        extra = ""
+        if self.mode == "bar_roi":
+            extra = f", brightness threshold: {self.profile.bar_brightness_threshold}"
         self.info_label.config(
-            text=f"Saved {self.mode}! X: {roi.x_start:.2f}-{roi.x_end:.2f}, Y: {roi.y_start:.2f}-{roi.y_end:.2f}"
+            text=f"Saved {self.mode}! X: {roi.x_start:.2f}-{roi.x_end:.2f}, Y: {roi.y_start:.2f}-{roi.y_end:.2f}{extra}"
         )
+
+    def _estimate_active_bar_threshold(self, x, y, width, height):
+        """Estimate brightness threshold from the user-selected active bar ROI."""
+        px = int(x * self.scale_factor)
+        py = int(y * self.scale_factor)
+        pw = int(width * self.scale_factor)
+        ph = int(height * self.scale_factor)
+
+        frame_h, frame_w = self.raw_bgr.shape[:2]
+        px = max(0, min(px, frame_w - 1))
+        py = max(0, min(py, frame_h - 1))
+        pw = max(1, min(pw, frame_w - px))
+        ph = max(1, min(ph, frame_h - py))
+
+        roi_frame = self.raw_bgr[py:py + ph, px:px + pw]
+        if roi_frame.size == 0:
+            return None
+
+        gray = cv2.cvtColor(roi_frame, cv2.COLOR_BGR2GRAY)
+        mean_brightness = float(np.mean(gray))
+        return int(np.clip(mean_brightness + 35, 50, 180))
 
     def _save_and_close(self):
         """Save settings and profile, then destroy the window."""

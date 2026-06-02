@@ -12,7 +12,7 @@ import logging
 import threading
 import time
 import tkinter as tk
-from tkinter import ttk, messagebox
+from tkinter import ttk, messagebox, simpledialog
 from typing import Optional
 
 logger = logging.getLogger("gui")
@@ -219,12 +219,12 @@ class MacroGUI:
             title_frame, text="🐟 Fisch Macro", style="Header.TLabel"
         ).pack(side=tk.LEFT)
 
-        killswitch_label = ttk.Label(
+        self.header_killswitch_label = ttk.Label(
             title_frame,
             text=f"⚡ Kill: {self.settings.killswitch_key.upper()}",
             style="Dim.TLabel",
         )
-        killswitch_label.pack(side=tk.RIGHT)
+        self.header_killswitch_label.pack(side=tk.RIGHT)
 
     # ─── Notebook (Tabs) ──────────────────────────────────────────
 
@@ -293,6 +293,21 @@ class MacroGUI:
             command=self._toggle_macro,
         )
         self.start_button.pack(fill=tk.X, padx=8, pady=8)
+
+        self.kill_button = tk.Button(
+            tab,
+            text=f"EMERGENCY STOP ({self.settings.killswitch_key.upper()})",
+            font=("Helvetica Neue", 13, "bold"),
+            bg=COLORS["danger"],
+            fg="#ffffff",
+            activebackground="#b83045",
+            activeforeground="#ffffff",
+            relief=tk.FLAT,
+            cursor="hand2",
+            height=1,
+            command=self._emergency_stop,
+        )
+        self.kill_button.pack(fill=tk.X, padx=8, pady=(0, 8))
 
         # ── Stats Grid ──
         stats_frame = ttk.Frame(tab, style="Card.TFrame")
@@ -720,6 +735,8 @@ class MacroGUI:
         self.settings.active_profile = self.profile_var.get()
 
         self.config.save_settings(self.settings)
+        self.engine.controller.setup_killswitch(self.settings.killswitch_key)
+        self._refresh_killswitch_labels()
         self._append_log("Settings saved ✓")
 
     def _save_calibration(self):
@@ -734,6 +751,7 @@ class MacroGUI:
                 y_end=self.roi_vars["y_end"].get(),
             )
             self.config.save_settings(self.settings)
+            self._refresh_roi_fields()
             self._append_log("Calibration saved ✓")
         except Exception as e:
             messagebox.showerror("Calibration Error", f"Invalid values: {e}")
@@ -798,6 +816,85 @@ class MacroGUI:
         except Exception as e:
             logger.error(f"Auto-calibration error: {e}", exc_info=True)
             messagebox.showerror("Calibration Error", str(e))
+
+    def _interactive_calibrate(self):
+        """Open the screenshot-based eyedropper and ROI calibration window."""
+        try:
+            from src.interactive_calibrator import InteractiveCalibrator
+
+            bounds = self.window_tracker.get_roblox_bounds()
+            if bounds is None:
+                messagebox.showwarning(
+                    "Roblox Not Found",
+                    "Could not find the Roblox window.\n\n"
+                    "Open Roblox in windowed mode, start the Fisch minigame, "
+                    "then run interactive calibration again.",
+                )
+                return
+
+            scale = self.window_tracker.get_scale_factor()
+            self.engine.detector.set_window_info(bounds, scale)
+            self._append_log("Opened interactive calibration")
+
+            window = InteractiveCalibrator(
+                self.root,
+                self.engine,
+                self.config,
+                self.window_tracker,
+            )
+            self.root.wait_window(window)
+            self.settings = self.config.load_settings()
+            self._refresh_roi_fields()
+            self._update_hsv_display()
+            self._append_log("Interactive calibration closed")
+        except Exception as e:
+            logger.error(f"Interactive calibration error: {e}", exc_info=True)
+            messagebox.showerror("Calibration Error", str(e))
+
+    def _rebind_killswitch(self):
+        """Prompt for a new killswitch key and restart the listener."""
+        key_name = simpledialog.askstring(
+            "Rebind Killswitch",
+            "Enter a key name such as esc, q, x, f8, or f12.\n\n"
+            "Avoid F6 on macOS because it is often captured as a media key.",
+            initialvalue=self.settings.killswitch_key,
+            parent=self.root,
+        )
+        if key_name is None:
+            return
+
+        key_name = key_name.strip().lower()
+        if not key_name:
+            messagebox.showwarning("Invalid Key", "Killswitch key cannot be empty.")
+            return
+
+        self.settings.killswitch_key = key_name
+        self.config.save_settings(self.settings)
+        self.engine.controller.setup_killswitch(key_name)
+        self._refresh_killswitch_labels()
+        self._append_log(f"Killswitch rebound to {key_name.upper()}")
+
+    def _emergency_stop(self):
+        """Stop the macro from the GUI without relying on global hotkeys."""
+        self.engine.controller.kill()
+        if self.engine.is_running():
+            self.engine.stop()
+        self._append_log("Emergency stop pressed")
+
+    def _refresh_killswitch_labels(self):
+        """Refresh all visible killswitch labels."""
+        label = self.settings.killswitch_key.upper()
+        self.header_killswitch_label.config(text=f"⚡ Kill: {label}")
+        self.killswitch_label.config(text=label)
+        self.kill_button.config(text=f"EMERGENCY STOP ({label})")
+
+    def _refresh_roi_fields(self):
+        """Refresh calibration entry fields from current settings."""
+        roi = self.settings.bar_roi
+        self.roi_vars["x_start"].set(roi.x_start)
+        self.roi_vars["x_end"].set(roi.x_end)
+        self.roi_vars["y_start"].set(roi.y_start)
+        self.roi_vars["y_end"].set(roi.y_end)
 
     def _update_hsv_display(self):
         """Update the HSV color range display."""

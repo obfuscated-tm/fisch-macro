@@ -59,7 +59,7 @@ class Settings:
         shake_enabled: Whether shake detection is enabled.
     """
 
-    killswitch_key: str = "esc"
+    killswitch_key: str = "f6"
     auto_recast: bool = True
     cast_hold_time: float = 2.0
     recast_delay: float = 2.0

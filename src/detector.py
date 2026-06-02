@@ -463,8 +463,9 @@ class Detector:
         if bar_frame is None:
             return DetectionResult(bar_active=False)
 
-        # --- Is the minigame bar active? ---
-        active = self.detect_bar_active(bar_frame)
+        shape_active = self.detect_bar_active(bar_frame)
+        fish_x = self.detect_fish_x(bar_frame)
+        active = shape_active or fish_x is not None
 
         if not active:
             # Check for a shake button instead
@@ -473,7 +474,6 @@ class Detector:
             return DetectionResult(bar_active=False, shake_pos=shake_pos)
 
         # --- Bar is active — run full detection ---
-        fish_x = self.detect_fish_x(bar_frame)
         bar_bounds = self.detect_control_bar(bar_frame)
 
         bar_left = bar_bounds[0] if bar_bounds else None

@@ -23,5 +23,5 @@
     "y_start": 0.2,
     "y_end": 0.7
   },
-  "shake_enabled": false
+  "shake_enabled": true
 }
