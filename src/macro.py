@@ -335,6 +335,8 @@ class MacroEngine:
             self._success_confirm_count = 0
             self._fail_confirm_count = 0
             self._bar_gone_confirm_count = 0
+            self._last_action_time = 0.0
+            self._last_action_type = None
             self._set_state(MacroState.REELING)
 
         elif result.shake_pos is not None and settings.shake_enabled:
@@ -367,6 +369,8 @@ class MacroEngine:
             self._success_confirm_count = 0
             self._fail_confirm_count = 0
             self._bar_gone_confirm_count = 0
+            self._last_action_time = 0.0
+            self._last_action_type = None
             self._set_state(MacroState.REELING)
             return
 
