@@ -115,6 +115,8 @@ class MacroEngine:
         self._fish_velocity = 0.0
         self._last_bar_center = None
         self._bar_velocity = 0.0
+        self._last_catch_time = 0.0
+        self._reeling_start_time = 0.0
 
     # ─── Callback Registration ────────────────────────────────────
 
@@ -308,6 +310,10 @@ class MacroEngine:
             return
 
         result = self.detector.detect_all()
+        
+        # Post-catch lockout (ignore bites for 4s after a catch to clear animations/text)
+        if time.time() - self._last_catch_time < 4.0:
+            return
 
         if result.bite_confirmed:
             # Minigame bar detected — fish has bitten!
@@ -316,6 +322,7 @@ class MacroEngine:
             self._reel_no_detection_count = 0
             self._last_progress = 0.0
             self._progress_stuck_count = 0
+            self._reeling_start_time = time.time()
             self._set_state(MacroState.REELING)
 
         elif result.shake_pos is not None and settings.shake_enabled:
@@ -333,6 +340,10 @@ class MacroEngine:
             return
 
         result = self.detector.detect_all()
+        
+        # Post-catch lockout
+        if time.time() - self._last_catch_time < 4.0:
+            return
 
         if result.bite_confirmed:
             # Bar appeared — transition to reeling
@@ -369,35 +380,63 @@ class MacroEngine:
         result = self.detector.detect_all()
 
         # Check if bar has disappeared (minigame over)
+        # 1. Immediate End-Game Detection
+        
+        # Success: Progress bar reaches the end
+        if result.progress > 0.98:
+            self.controller.mouse_release()
+            self.stats.record_catch(perfect=(result.progress > 0.995))
+            self._emit_log("✅ Fish caught! (Progress Full)")
+            self._emit_stats()
+            self._last_catch_time = time.time()
+            self._set_state(MacroState.COMPLETE)
+            return
+
+        # Failure: Progress reached zero and the bar disappeared
+        # GRACE PERIOD: Ignore zero-progress failures in the first 2 seconds of reeling
+        # to allow for intro animations and progress bar appearing.
+        if not result.bite_confirmed and result.progress < 0.01:
+            if time.time() - self._reeling_start_time > 2.0:
+                self._reel_no_detection_count += 1
+                # Very short timeout (250ms) when progress is zero
+                if self._reel_no_detection_count > 5:
+                    self.controller.mouse_release()
+                    self.stats.record_fail()
+                    self._emit_log("❌ Fish got away! (Progress Empty)")
+                    self._emit_stats()
+                    self._last_catch_time = time.time()
+                    self._set_state(MacroState.COMPLETE)
+                    return
+            # Hover during flicker/start
+            self.controller.rapid_click(count=1, interval=0.0)
+            return
+
+        # Handle general bar disappearance (might be success text blocking progress bar)
         if not result.bar_active:
             self._reel_no_detection_count += 1
-            if self._reel_no_detection_count > self._reel_max_no_detection:
-                # Bar has been gone for ~1.5 seconds — minigame is over
+            # Medium timeout (500ms) for general disappearance
+            if self._reel_no_detection_count > 10:
                 self.controller.mouse_release()
                 
-                # Success criteria: 
-                # 1. Final progress is very high (standard catch)
-                # 2. Progress WAS very high just before it disappeared (text might have covered final frames)
-                if result.progress > 0.95 or self._last_progress > 0.95:
-                    self.stats.record_catch(perfect=(max(result.progress, self._last_progress) > 0.98))
-                    self._emit_log("✅ Fish caught!")
+                # Success criteria fallback: 
+                # Progress WAS very high just before it disappeared
+                if self._last_progress > 0.90:
+                    self.stats.record_catch(perfect=(self._last_progress > 0.98))
+                    self._emit_log("✅ Fish caught! (Bar Gone)")
                 else:
                     self.stats.record_fail()
-                    self._emit_log("❌ Fish got away!")
+                    self._emit_log("❌ Fish got away! (Bar Gone)")
 
+                self._last_catch_time = time.time()
                 self._emit_stats()
                 self._set_state(MacroState.COMPLETE)
                 return
             else:
-                # Bar flickered or covered by text?
-                # If we were at high progress, assume it's still reeling or ending
-                if self._last_progress > 0.9:
-                    self.controller.mouse_release() # safer at the end
-                else:
-                    self.controller.rapid_click(count=1, interval=0.0)
+                # Hover during flickering
+                self.controller.rapid_click(count=1, interval=0.0)
                 return
 
-        # Reset no-detection counter since bar is visible
+        # Reset no-detection counter since something is visible
         self._reel_no_detection_count = 0
 
         # Track progress and target status
@@ -411,13 +450,12 @@ class MacroEngine:
         on_target = result.on_target
 
         if fish_x is None or bar_left is None or bar_right is None:
-            # Can't see fish or bar — hold position with rapid clicking
-            self.controller.rapid_click(count=2, interval=0.03)
+            self.controller.rapid_click(count=1, interval=0.0)
             return
 
         # 1. Tracking and Velocities
-        # Use low-pass filtering for both fish and bar to filter out capture noise
-        alpha = 0.35
+        # Reduced smoothing (higher alpha) to reduce phase lag/delay
+        alpha = 0.60
         
         # Fish velocity
         if self._last_fish_x is not None:
@@ -438,45 +476,55 @@ class MacroEngine:
         error = fish_x - bar_center
         velocity_diff = self._fish_velocity - self._bar_velocity
         
-        # We want to hold if:
-        # 1. The fish is to the right (error > 0)
-        # 2. The fish is moving right faster than the bar (velocity_diff > 0)
-        # 3. The bar is falling too fast (bar_velocity << 0)
+        # LOWER GAINS to stop the swaying positive feedback loop
+        kp = 0.5 
+        kd = 3.5 
         
-        # Combined PD score
-        # Kp: Proportional gain (chase the error)
-        # Kd: Derivative gain (dampen the movement / counteract velocity)
-        kp = 1.0
-        kd = 5.0 # High damping to prevent swaying
+        # Boundary Awareness: Dampen derivative damping near walls to prevent 'bounce-panic'
+        near_right_wall = bar_right > 0.96
+        near_left_wall = bar_left < 0.04
+        if (near_right_wall and self._bar_velocity > 0) or (near_left_wall and self._bar_velocity < 0):
+            kd = 1.0 
         
         pd_score = (kp * error) + (kd * velocity_diff)
         
         # Deadzone based on target status
-        deadzone = 0.04 if on_target else 0.01
+        deadzone = 0.05 if on_target else 0.01
         
-        if fish_x > bar_right - 0.01:
+        # 3. Decision Logic
+        if near_right_wall and fish_x > bar_center:
+            # At right limit and fish is right - stay pinned
+            self.controller.mouse_hold()
+        elif near_left_wall and fish_x < bar_center:
+            # At left limit and fish is left - stay pinned
+            self.controller.mouse_release()
+        elif fish_x > bar_right - 0.01:
             # Panic: Fish is escaping right
             self.controller.mouse_hold()
         elif fish_x < bar_left + 0.01:
             # Panic: Fish is escaping left
             self.controller.mouse_release()
         elif abs(error) < deadzone and abs(self._bar_velocity) < 0.01:
-            # Perfectly centered and stable
+            # Stable
             self.controller.rapid_click(count=1, interval=0.0)
         elif pd_score > 0.01:
             # Need more upward/rightward force
-            self.controller.mouse_hold()
-        elif pd_score < -0.01:
-            # Need less force / let it fall
-            self.controller.mouse_release()
-        else:
-            # In the sweet spot, maintain position
-            if bar_center < fish_x:
+            if pd_score < 0.15:
                 self.controller.mouse_hold()
-                time.sleep(0.01) # Micro-nudge
+                time.sleep(0.01) # Micro-pulse
                 self.controller.mouse_release()
             else:
+                self.controller.mouse_hold()
+        elif pd_score < -0.01:
+            # Need less force / let it fall
+            if pd_score > -0.15:
                 self.controller.mouse_release()
+                time.sleep(0.01) # Micro-drift
+            else:
+                self.controller.mouse_release()
+        else:
+            # Hover
+            self.controller.rapid_click(count=1, interval=0.0)
 
     def _do_complete(self, settings):
         """

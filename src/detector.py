@@ -448,9 +448,15 @@ class Detector:
 
         rightmost = -1
         col_sums = np.sum(mask, axis=0)  # vectorised column counts
+        
+        # We scan from left and only accept contiguous columns.
+        # This prevents success text from being seen as 100% progress.
         for col in range(w):
             if col_sums[col] >= min_pixels:
                 rightmost = col
+            elif col > 5 and rightmost < col - 10: 
+                # Large gap found - stop scanning to avoid text ghosting
+                break
 
         if rightmost < 0:
             return 0.0
