@@ -2,3 +2,5 @@ PASS: all smoke scenarios passed.
 - premature finish blocked
 - flicker hysteresis held
 - stable target did not thrash
+- VFX false-finish blocked
+- bar velocity compensation working

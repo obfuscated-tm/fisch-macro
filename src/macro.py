@@ -121,6 +121,8 @@ class MacroEngine:
         self._success_confirm_count = 0
         self._fail_confirm_count = 0
         self._bar_gone_confirm_count = 0
+        # Finish-capture debounce counter (separate from success counter to prevent VFX flashes)
+        self._finish_confirm_count = 0
         # Action dwell / rate limiting for control stability
         self._last_action_time = 0.0
         self._last_action_type = None  # 'hold', 'release', 'rapid_click'
@@ -334,6 +336,8 @@ class MacroEngine:
             self._success_confirm_count = 0
             self._fail_confirm_count = 0
             self._bar_gone_confirm_count = 0
+            # Reset finish-capture debounce counter
+            self._finish_confirm_count = 0
             self._last_action_time = 0.0
             self._last_action_type = None
             self._set_state(MacroState.REELING)
@@ -420,24 +424,24 @@ class MacroEngine:
         
         # Success: Progress bar reaches the end
         if result.progress > 0.98:
-            self._success_confirm_count += 1
-            logger.debug("Success confirmation: %d/%d consecutive", self._success_confirm_count, success_confirm_frames)
-            if self._success_confirm_count >= success_confirm_frames:
+            self._finish_confirm_count += 1
+            logger.debug("Finish confirmation: %d/%d consecutive", self._finish_confirm_count, success_confirm_frames)
+            if self._finish_confirm_count >= success_confirm_frames:
                 # Guard check: only allow success if past guard window OR we have strong confirmation
                 elapsed = time.time() - self._reeling_start_time
-                if elapsed >= reeling_guard_seconds or self._success_confirm_count >= guard_success_confirm_frames:
+                if elapsed >= reeling_guard_seconds or self._finish_confirm_count >= guard_success_confirm_frames:
                     self.controller.mouse_release()
                     self.stats.record_catch(perfect=(result.progress > 0.995))
                     self._emit_log("✅ Fish caught! (Progress Full)")
                     self._emit_stats()
                     self._last_catch_time = time.time()
                     self._set_state(MacroState.COMPLETE)
-                    self._success_confirm_count = 0
+                    self._finish_confirm_count = 0
                     return
                 else:
                     logger.debug("Guard blocking success exit (%.1fs < %.1fs)", elapsed, reeling_guard_seconds)
         else:
-            self._success_confirm_count = 0  # reset on non-success readings
+            self._finish_confirm_count = 0  # reset on non-success readings
 
         # Failure: Progress reached zero and the bar disappeared
         # GRACE PERIOD: Ignore zero-progress failures in the first 2 seconds of reeling
@@ -473,9 +477,9 @@ class MacroEngine:
 
         # Handle general bar disappearance (might be success text blocking progress bar)
         if not result.bar_active:
-            self._bar_gone_confirm_count += 1
-            logger.debug("Bar-gone confirmation: %d/%d consecutive", self._bar_gone_confirm_count, bar_gone_confirm_frames)
-            if self._bar_gone_confirm_count >= bar_gone_confirm_frames:
+            self._finish_confirm_count += 1
+            logger.debug("Finish confirmation (bar-gone): %d/%d consecutive", self._finish_confirm_count, bar_gone_confirm_frames)
+            if self._finish_confirm_count >= bar_gone_confirm_frames:
                 # Guard check: only allow bar-gone exit if past guard window
                 elapsed = time.time() - self._reeling_start_time
                 if elapsed >= reeling_guard_seconds:
@@ -493,7 +497,7 @@ class MacroEngine:
                     self._last_catch_time = time.time()
                     self._emit_stats()
                     self._set_state(MacroState.COMPLETE)
-                    self._bar_gone_confirm_count = 0
+                    self._finish_confirm_count = 0
                     return
                 else:
                     logger.debug("Guard blocking bar-gone exit (%.1fs < %.1fs)", elapsed, reeling_guard_seconds)
@@ -502,7 +506,7 @@ class MacroEngine:
                 self.controller.rapid_click(count=1, interval=0.0)
                 return
         else:
-            self._bar_gone_confirm_count = 0
+            self._finish_confirm_count = 0
 
         # Reset no-detection counter since something is visible
         self._reel_no_detection_count = 0
@@ -538,23 +542,35 @@ class MacroEngine:
             self._bar_velocity = (self._bar_velocity * (1.0 - alpha)) + (inst_bar_v * alpha)
         self._last_bar_center = bar_center
 
-        # 2. PD-Control Decision Logic (Proportional-Derivative)
+         # 2. PD-Control Decision Logic (Proportional-Derivative)
         # error: how far the fish is from the bar center
         # velocity_diff: how fast the fish is moving relative to the bar
         error = fish_x - bar_center
         velocity_diff = self._fish_velocity - self._bar_velocity
         
-        # LOWER GAINS to stop the swaying positive feedback loop
-        kp = 0.5 
-        kd = 3.5 
+        # More conservative gains to reduce overestimation when bar speed varies
+        kp = 0.3  # Reduced from 0.5 for less aggressive response
+        kd = 2.0  # Reduced from 3.5 for less derivative sensitivity
         
         # Boundary Awareness: Dampen derivative damping near walls to prevent 'bounce-panic'
         near_right_wall = bar_right > 0.96
         near_left_wall = bar_left < 0.04
         if (near_right_wall and self._bar_velocity > 0) or (near_left_wall and self._bar_velocity < 0):
-            kd = 1.0 
+            kd = 0.5  # Further reduced near walls
         
-        pd_score = (kp * error) + (kd * velocity_diff)
+        # Additional conservatism: reduce gains when velocity is high (indicating instability)
+        velocity_magnitude = abs(self._bar_velocity) + abs(self._fish_velocity)
+        if velocity_magnitude > 0.5:  # High velocity indicates instability
+            kp *= 0.5
+            kd *= 0.5
+        
+        # Bar-velocity compensation: feed-forward term to anticipate bar motion
+        # When bar moves left (negative velocity), bias right (positive score)
+        # When bar moves right (positive velocity), bias left (negative score)
+        k_vc = 0.15  # Conservative velocity compensation gain
+        velocity_compensation = -self._bar_velocity * k_vc
+        
+        pd_score = (kp * error) + (kd * velocity_diff) + velocity_compensation
         
         # PD-score deadband: prevent tiny oscillations from flipping direction
         

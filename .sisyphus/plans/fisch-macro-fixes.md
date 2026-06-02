@@ -324,7 +324,7 @@ Dependency note: Task 3 depends on the transition guards from Tasks 1-2; Task 5 
     Evidence: .sisyphus/evidence/task-4-config-roundtrip.txt
   ```
 
-- [ ] 5. Add smoke verification harness
+- [x] 5. Add smoke verification harness
 
   **What to do**:
   - Add a lightweight Python smoke check that exercises the three bug scenarios with mocked detector/controller behavior.
@@ -402,7 +402,7 @@ python scripts/smoke_fisch_macro.py  # Expected: all scenarios pass
 ```
 
 ### Final Checklist
-- [ ] Premature cast-completion signal fixed
-- [ ] Cast-stop behavior debounced / hysteresis-added
-- [ ] Positive feedback loop damped
-- [ ] Smoke verification passes
+- [x] Premature cast-completion signal fixed
+- [x] Cast-stop behavior debounced / hysteresis-added
+- [x] Positive feedback loop damped
+- [x] Smoke verification passes

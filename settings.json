@@ -1,7 +1,7 @@
 {
   "killswitch_key": "f6",
   "auto_recast": true,
-  "cast_hold_time": 0.6842105263157895,
+  "cast_hold_time": 0.6848591549295775,
   "recast_delay": 2.5412371134020617,
   "scan_interval_ms": 20,
   "active_profile": "castbound",
@@ -23,5 +23,12 @@
     "y_start": 0.04072398190045249,
     "y_end": 0.997737556561086
   },
-  "shake_enabled": false
+  "shake_enabled": false,
+  "reeling_guard_seconds": 1.5,
+  "success_confirm_frames": 3,
+  "fail_confirm_frames": 5,
+  "bar_gone_confirm_frames": 15,
+  "action_min_dwell_seconds": 0.08,
+  "stable_hysteresis_multiplier": 1.5,
+  "pd_deadband": 0.02
 }

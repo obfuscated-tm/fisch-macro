@@ -33,6 +33,10 @@ COLORS = {
     "success": "#00d474",
     "danger": "#e94560",
     "warning": "#f5a623",
+    # Settings panel — light card surface so black text is readable
+    "settings_bg": "#eef1f5",
+    "settings_text": "#000000",
+    "settings_dim": "#444444",
 }
 
 STATE_COLORS = {
@@ -228,6 +232,49 @@ class MacroGUI:
             font=("Helvetica Neue", 12),
         )
 
+        # ── Settings panel — light card with black text ──
+        s.configure(
+            "Settings.TFrame",
+            background=COLORS["settings_bg"],
+        )
+        s.configure(
+            "Settings.TLabel",
+            background=COLORS["settings_bg"],
+            foreground=COLORS["settings_text"],
+            font=("Helvetica Neue", 13),
+        )
+        s.configure(
+            "SettingsDim.TLabel",
+            background=COLORS["settings_bg"],
+            foreground=COLORS["settings_dim"],
+            font=("Helvetica Neue", 10, "bold"),
+        )
+        s.configure(
+            "SettingsStat.TLabel",
+            background=COLORS["settings_bg"],
+            foreground=COLORS["settings_text"],
+            font=("Menlo", 12),
+        )
+        s.configure(
+            "Settings.TScale",
+            background=COLORS["settings_bg"],
+            troughcolor=COLORS["border"],
+        )
+        s.layout(
+            "Horizontal.Settings.TScale",
+            s.layout("Horizontal.TScale"),
+        )
+        s.layout(
+            "Vertical.Settings.TScale",
+            s.layout("Vertical.TScale"),
+        )
+        s.configure(
+            "Settings.TCheckbutton",
+            background=COLORS["settings_bg"],
+            foreground=COLORS["settings_text"],
+            font=("Helvetica Neue", 12),
+        )
+
     # ─── Header ───────────────────────────────────────────────────
 
     def _build_header(self):
@@ -404,9 +451,9 @@ class MacroGUI:
         tab = self.settings_tab
 
         # Scrollable content
-        canvas = tk.Canvas(tab, bg=COLORS["bg"], highlightthickness=0)
+        canvas = tk.Canvas(tab, bg=COLORS["settings_bg"], highlightthickness=0)
         scrollbar = ttk.Scrollbar(tab, orient=tk.VERTICAL, command=canvas.yview)
-        content = ttk.Frame(canvas, style="TFrame")
+        content = ttk.Frame(canvas, style="Settings.TFrame")
 
         content.bind(
             "<Configure>",
@@ -460,11 +507,13 @@ class MacroGUI:
         # ── Hotkey Section ──
         self._add_section_header(content, "Hotkey")
         
-        ks_frame = ttk.Frame(content)
+        ks_frame = ttk.Frame(content, style="Settings.TFrame")
         ks_frame.pack(fill=tk.X, padx=12, pady=4)
         
-        ttk.Label(ks_frame, text="Start/Stop Key:").pack(side=tk.LEFT)
-        self.killswitch_label = ttk.Label(ks_frame, text=self.settings.killswitch_key.upper(), style="Stat.TLabel")
+        ttk.Label(ks_frame, text="Start/Stop Key:", style="Settings.TLabel").pack(side=tk.LEFT)
+        self.killswitch_label = ttk.Label(
+            ks_frame, text=self.settings.killswitch_key.upper(), style="SettingsStat.TLabel"
+        )
         self.killswitch_label.pack(side=tk.LEFT, padx=10)
         
         rebind_btn = tk.Button(
@@ -476,33 +525,28 @@ class MacroGUI:
 
     def _add_section_header(self, parent, text):
         """Add a section header label."""
-        frame = ttk.Frame(parent)
+        frame = ttk.Frame(parent, style="Settings.TFrame")
         frame.pack(fill=tk.X, padx=12, pady=(16, 4))
         ttk.Label(
             frame,
             text=text.upper(),
-            font=("Helvetica Neue", 10, "bold"),
-            foreground=COLORS["text_dim"],
+            style="SettingsDim.TLabel",
         ).pack(anchor=tk.W)
-        # Separator line
-        sep = tk.Frame(frame, bg=COLORS["border"], height=1)
-        sep.pack(fill=tk.X, pady=(4, 0))
 
     def _add_slider(self, parent, label, variable, from_, to, resolution, suffix=""):
         """Add a labeled slider with value display."""
-        frame = ttk.Frame(parent)
+        frame = ttk.Frame(parent, style="Settings.TFrame")
         frame.pack(fill=tk.X, padx=12, pady=4)
 
-        top = ttk.Frame(frame)
+        top = ttk.Frame(frame, style="Settings.TFrame")
         top.pack(fill=tk.X)
 
-        ttk.Label(top, text=label).pack(side=tk.LEFT)
+        ttk.Label(top, text=label, style="Settings.TLabel").pack(side=tk.LEFT)
 
         value_label = ttk.Label(
             top,
             text=f"{variable.get()}{suffix}",
-            style="Stat.TLabel",
-            font=("Menlo", 12),
+            style="SettingsStat.TLabel",
         )
         value_label.pack(side=tk.RIGHT)
 
@@ -511,6 +555,7 @@ class MacroGUI:
             from_=from_,
             to=to,
             variable=variable,
+            style="Settings.TScale",
             orient=tk.HORIZONTAL,
         )
         scale.pack(fill=tk.X, pady=(2, 0))
@@ -526,9 +571,11 @@ class MacroGUI:
 
     def _add_toggle(self, parent, label, variable):
         """Add a labeled toggle checkbox."""
-        frame = ttk.Frame(parent)
+        frame = ttk.Frame(parent, style="Settings.TFrame")
         frame.pack(fill=tk.X, padx=12, pady=4)
-        cb = ttk.Checkbutton(frame, text=label, variable=variable)
+        cb = ttk.Checkbutton(
+            frame, text=label, variable=variable, style="Settings.TCheckbutton"
+        )
         cb.pack(anchor=tk.W)
 
     # ─── Calibration Tab ──────────────────────────────────────────
@@ -735,8 +782,6 @@ class MacroGUI:
             self.settings.active_profile = self.profile_var.get()
 
             self.config.save_settings(self.settings)
-            self.engine.controller.setup_killswitch(self.settings.killswitch_key)
-            self._refresh_killswitch_labels()
         except Exception as e:
             logger.error(f"Auto-save settings failed: {e}")
 

@@ -1,0 +1,2 @@
+PASS: VFX false-finish scenario does not trigger premature completion.
+actions=['rapid_click', 'rapid_click', 'rapid_click', 'rapid_click', 'rapid_click', 'rapid_click', 'rapid_click']
