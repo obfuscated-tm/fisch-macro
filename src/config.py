@@ -68,13 +68,54 @@ class Settings:
         shake_roi: ROI for shake/QTE detection area.
         shake_enabled: Whether shake detection is enabled.
         reeling_guard_seconds: Seconds to block premature completion/failure detection at start of reeling.
-        success_confirm_frames: Consecutive frames needed to confirm success.
+        success_confirm_frames: Consecutive frames needed to confirm progress-based success.
         fail_confirm_frames: Consecutive frames needed to confirm failure.
         bar_gone_confirm_frames: Consecutive frames needed to confirm bar disappearance.
+        finish_progress_threshold: Progress fill ratio treated as a full catch.
+        peak_progress_catch_threshold: Peak progress during reel to treat bar-gone as a catch.
+        max_progress_jump: Ignore single-frame progress spikes larger than this (VFX).
+        progress_finish_reset_frames: Consecutive sub-threshold frames before resetting progress finish debounce.
+        min_catch_seconds: Minimum seconds in reeling before any catch can register.
+        shake_click_cooldown_seconds: Minimum seconds between auto-shake clicks.
+        shake_min_confidence: Minimum detection confidence (0–1) required to click SHAKE.
         action_min_dwell_seconds: Minimum seconds between action changes for control stability.
         stable_hysteresis_multiplier: Multiplier for hysteresis deadzone when stable.
         pd_deadband: Deadband for PD controller score to prevent tiny oscillations.
-    """
+        fish_prediction_ms: Milliseconds to predict fish position ahead (lookahead).
+        fish_velocity_smoothing: EMA alpha for fish velocity (lower = more momentum lag).
+        bar_velocity_smoothing: EMA alpha for bar velocity (lower = more drift after direction changes).
+        bar_momentum_factor: How much bar drift offsets the target (0–1).
+        prediction_weight: Blend of predicted vs current fish position (0–1).
+        control_kp: Proportional gain for bar control.
+        control_kd: Derivative gain for bar control.
+        control_bar_drift_gain: Feed-forward gain compensating bar coasting.
+        min_midgame_progress: Progress fill required before a catch can register.
+        bar_gone_near_peak_delta: Bar-gone catch requires last progress within this of peak.
+        roi_shift_x: Fine-tune all ROIs horizontally (normalized, positive = right).
+        roi_shift_y: Fine-tune all ROIs vertically (normalized, positive = down).
+        window_inset_top: Crop fraction from top of Roblox window for capture alignment.
+        window_inset_left: Crop fraction from left of Roblox window for capture alignment.
+        prediction_use_acceleration: Use acceleration term in fish lookahead (digmacro-style).
+        prediction_arrival_lead: Bias control toward predicted arrival when fish is moving.
+        near_finish_confirm_frames: Frames at ~full progress to catch even if bar still visible.
+        show_live_vision: Show live detection preview on the Control tab.
+        progress_smoothing: EMA alpha for progress (lower = smoother, resists gradient spikes).
+        max_progress_tick: Max progress increase per frame for trusted peak tracking.
+        off_target_chase_gain: Control gain multiplier when bar is off-target / fish outside bar.
+        progress_collapse_min_peak: Raw peak progress required to treat a collapse as fight end.
+        progress_collapse_confirm_frames: Consecutive collapse frames before completing catch.
+        reel_stall_seconds: Seconds without progress gain before allowing stall-based completion.
+        reel_stall_min_peak: Raw peak required for stall-based completion.
+        left_stall_bar_edge: Bar left edge below this triggers left-side recovery hold logic.
+        prediction_stationary_speed: Below this speed (norm/s), prediction blend fades to zero.
+        prediction_recent_window_seconds: Seconds of history used for recent velocity / prediction.
+        post_catch_lockout_seconds: Ignore new bites briefly after a catch (lets UI clear).
+        post_catch_clear_frames: Consecutive clear frames required before hunting a new bite.
+        bite_confirm_frames: Frames to confirm a partial bite (fish without full bar yet).
+        bite_progress_threshold: Progress fill that indicates a bite with fish visible.
+        fast_catch_min_seconds: Minimum reeling time for fast/instant-catch rods (lower than min_catch_seconds).
+        post_cast_bite_window: Seconds after cast release to aggressively scan for an instant bite.
+"""
 
     killswitch_key: str = "f6"
     auto_recast: bool = True
@@ -86,13 +127,54 @@ class Settings:
     progress_roi: ROIBounds = field(default_factory=lambda: ROIBounds(0.28, 0.72, 0.87, 0.90))
     shake_roi: ROIBounds = field(default_factory=lambda: ROIBounds(0.10, 0.90, 0.20, 0.70))
     shake_enabled: bool = True
-    reeling_guard_seconds: float = 1.5
-    success_confirm_frames: int = 3
+    reeling_guard_seconds: float = 2.5
+    success_confirm_frames: int = 6
     fail_confirm_frames: int = 5
-    bar_gone_confirm_frames: int = 15
+    bar_gone_confirm_frames: int = 12
+    finish_progress_threshold: float = 0.96
+    peak_progress_catch_threshold: float = 0.88
+    max_progress_jump: float = 0.35
+    progress_finish_reset_frames: int = 2
+    min_catch_seconds: float = 5.0
+    shake_click_cooldown_seconds: float = 0.12
+    shake_min_confidence: float = 0.42
     action_min_dwell_seconds: float = 0.08
     stable_hysteresis_multiplier: float = 1.5
     pd_deadband: float = 0.02
+    fish_prediction_ms: float = 80.0
+    fish_velocity_smoothing: float = 0.35
+    bar_velocity_smoothing: float = 0.25
+    bar_momentum_factor: float = 0.55
+    prediction_weight: float = 0.65
+    control_kp: float = 0.28
+    control_kd: float = 1.2
+    control_bar_drift_gain: float = 0.06
+    min_midgame_progress: float = 0.35
+    bar_gone_near_peak_delta: float = 0.12
+    roi_shift_x: float = 0.0
+    roi_shift_y: float = 0.0
+    window_inset_top: float = 0.0
+    window_inset_left: float = 0.0
+    prediction_use_acceleration: bool = True
+    prediction_arrival_lead: bool = True
+    near_finish_confirm_frames: int = 10
+    show_live_vision: bool = True
+    progress_smoothing: float = 0.35
+    max_progress_tick: float = 0.06
+    off_target_chase_gain: float = 1.45
+    progress_collapse_min_peak: float = 0.55
+    progress_collapse_confirm_frames: int = 5
+    reel_stall_seconds: float = 18.0
+    reel_stall_min_peak: float = 0.60
+    left_stall_bar_edge: float = 0.12
+    prediction_stationary_speed: float = 0.04
+    prediction_recent_window_seconds: float = 0.2
+    post_catch_lockout_seconds: float = 1.5
+    post_catch_clear_frames: int = 5
+    bite_confirm_frames: int = 2
+    bite_progress_threshold: float = 0.08
+    fast_catch_min_seconds: float = 1.0
+    post_cast_bite_window: float = 2.5
 
 
 class ConfigManager:

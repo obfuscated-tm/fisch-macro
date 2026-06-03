@@ -1,10 +1,12 @@
 import logging
+import time
 import tkinter as tk
 from tkinter import ttk, messagebox
 import cv2
 import numpy as np
 from PIL import Image, ImageTk
 
+from src.calibrator import Calibrator
 from src.config import ROIBounds
 
 logger = logging.getLogger("interactive_calibrator")
@@ -25,61 +27,119 @@ class InteractiveCalibrator(tk.Toplevel):
     Takes a screenshot and allows the user to pick colors and draw ROIs.
     """
 
-    def __init__(self, parent, engine, config_manager, window_tracker):
+    def __init__(self, parent, engine, config_manager, window_tracker, background_bgr=None):
         super().__init__(parent)
         self.engine = engine
         self.config = config_manager
         self.window_tracker = window_tracker
         self.settings = self.config.load_settings()
         self.profile = self.config.get_active_profile()
+        self.window_tracker.invalidate_cache()
         self.window_bounds = self.window_tracker.get_roblox_bounds()
         self.monitor_left = 0
         self.monitor_top = 0
+        self._bg_image_id = None
 
         self.title("Interactive Calibration")
-        self.attributes("-fullscreen", True)
-        self.attributes("-topmost", True)
         self.configure(bg="black")
-        
+        self.withdraw()
+
         # Calibration state
         self.mode = None  # 'fish_color', 'bar_color', 'bar_roi', 'shake_roi', 'progress_roi'
         self.rect_start = None
         self.current_rect_id = None
         self.drawn_rects = {}  # Store rect IDs for the different ROIs
-        
-        self._take_screenshot()
+
+        if background_bgr is not None:
+            self._load_screenshot_frame(background_bgr)
+        else:
+            self._capture_screenshot_hidden()
+
         self._build_ui()
         self._bind_events()
         self._draw_existing_rois()
 
-    def _take_screenshot(self):
-        """Take a full screen screenshot and prepare it for the canvas."""
-        self.scale_factor = self.window_tracker.get_scale_factor()
-        
-        # Use mss to capture
+        self.update_idletasks()
+        self.attributes("-fullscreen", True)
+        self.attributes("-topmost", True)
+        self.deiconify()
+        self.lift()
+
+    def _read_monitor_origin(self) -> None:
         import mss
+
         with mss.mss() as sct:
-            monitor = sct.monitors[1]  # primary monitor
+            monitor = sct.monitors[1]
             self.monitor_left = int(monitor.get("left", 0))
             self.monitor_top = int(monitor.get("top", 0))
-            sct_img = sct.grab(monitor)
-            self.raw_bgr = np.array(sct_img)
-            self.raw_bgr = cv2.cvtColor(self.raw_bgr, cv2.COLOR_BGRA2BGR)
-            
-        # Resize to logical coordinates for Tkinter display
-        h, w = self.raw_bgr.shape[:2]
+
+    def _load_screenshot_frame(self, frame: np.ndarray) -> None:
+        """Prepare a pre-captured BGR frame for the canvas (no live grab)."""
+        self.scale_factor = self.window_tracker.get_scale_factor()
+        self._read_monitor_origin()
+        self.raw_bgr = frame.copy()
+        self.photo_img = self._frame_to_photo(self.raw_bgr)
+
+    def _frame_to_photo(self, frame: np.ndarray) -> ImageTk.PhotoImage:
+        h, w = frame.shape[:2]
         logical_w = int(w / self.scale_factor)
         logical_h = int(h / self.scale_factor)
-        
-        # Convert to PIL and resize
-        rgb_img = cv2.cvtColor(self.raw_bgr, cv2.COLOR_BGR2RGB)
+        rgb_img = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         pil_img = Image.fromarray(rgb_img)
-        
-        # Only resize if scale factor is > 1
         if self.scale_factor > 1.0:
             pil_img = pil_img.resize((logical_w, logical_h), Image.Resampling.LANCZOS)
-            
-        self.photo_img = ImageTk.PhotoImage(pil_img)
+        return ImageTk.PhotoImage(pil_img)
+
+    def _capture_screenshot_hidden(self) -> None:
+        """Grab the screen while this overlay is hidden (avoids black slide frames)."""
+        self.withdraw()
+        self.update_idletasks()
+        time.sleep(0.25)
+        calibrator = Calibrator(self.engine.detector, self.config)
+        frame = calibrator.capture_stable_screenshot(wait_seconds=0.1, max_attempts=6)
+        if frame is None:
+            raise RuntimeError(
+                "Could not capture a clean screenshot. Close fullscreen animation, "
+                "then use Retake Screenshot or reopen calibration."
+            )
+        self._load_screenshot_frame(frame)
+
+    def _retake_screenshot(self) -> None:
+        """Hide overlay, wait for macOS space animation, then refresh the background."""
+        self.instruction_label.config(text="Retaking screenshot — please wait…")
+        self.update_idletasks()
+        was_fullscreen = self.attributes("-fullscreen")
+        if was_fullscreen:
+            self.attributes("-fullscreen", False)
+        self.withdraw()
+        self.update_idletasks()
+        time.sleep(0.55)
+        calibrator = Calibrator(self.engine.detector, self.config)
+        frame = calibrator.capture_stable_screenshot(wait_seconds=0.15, max_attempts=8)
+        if frame is None:
+            messagebox.showerror(
+                "Screenshot Failed",
+                "Capture still shows black bars from the fullscreen animation.\n\n"
+                "Wait a moment, then click Retake Screenshot again.",
+                parent=self,
+            )
+            self.deiconify()
+            if was_fullscreen:
+                self.attributes("-fullscreen", True)
+            return
+        self._load_screenshot_frame(frame)
+        self.canvas.config(width=self.photo_img.width(), height=self.photo_img.height())
+        if self._bg_image_id is not None:
+            self.canvas.delete(self._bg_image_id)
+        self._bg_image_id = self.canvas.create_image(0, 0, image=self.photo_img, anchor=tk.NW)
+        self.canvas.tag_lower(self._bg_image_id)
+        self.drawn_rects.clear()
+        self._draw_existing_rois()
+        self.instruction_label.config(text="Screenshot updated. Select a tool to continue.")
+        self.deiconify()
+        if was_fullscreen:
+            self.attributes("-fullscreen", True)
+        self.lift()
 
     def _build_ui(self):
         """Build the canvas and the control toolbar."""
@@ -92,7 +152,7 @@ class InteractiveCalibrator(tk.Toplevel):
             cursor="crosshair"
         )
         self.canvas.pack(fill=tk.BOTH, expand=True)
-        self.canvas.create_image(0, 0, image=self.photo_img, anchor=tk.NW)
+        self._bg_image_id = self.canvas.create_image(0, 0, image=self.photo_img, anchor=tk.NW)
         
         # Control Toolbar
         self.toolbar = tk.Frame(self.canvas, bg=COLORS["bg_card"], bd=2, relief=tk.RAISED)
@@ -131,7 +191,12 @@ class InteractiveCalibrator(tk.Toplevel):
         create_btn("6. Shake", "shake_roi", COLORS["accent_blue"])
         
         tk.Label(btn_frame, text=" | ", bg=COLORS["bg_card"], fg="white").pack(side=tk.LEFT, padx=5)
-        
+
+        tk.Button(
+            btn_frame, text="Retake Screenshot", font=("Helvetica Neue", 12),
+            bg="#5c6bc0", fg="white", cursor="hand2", command=self._retake_screenshot
+        ).pack(side=tk.LEFT, padx=3)
+
         tk.Button(
             btn_frame, text="Save & Close", font=("Helvetica Neue", 12, "bold"),
             bg="#28a745", fg="white", cursor="hand2", command=self._save_and_close
@@ -160,26 +225,33 @@ class InteractiveCalibrator(tk.Toplevel):
             "shake_roi": (self.settings.shake_roi, "red"),
         }
 
+        settings = self.settings
+        inset_left = window_bounds.width * settings.window_inset_left
+        inset_top = window_bounds.height * settings.window_inset_top
+        eff_x = window_bounds.x + inset_left
+        eff_y = window_bounds.y + inset_top
+        eff_w = max(1, window_bounds.width - inset_left)
+        eff_h = max(1, window_bounds.height - inset_top)
+
         for mode, (roi, color) in roi_styles.items():
-            # Coordinates are absolute logical screen points
-            x0 = window_bounds.x + window_bounds.width * roi.x_start
-            y0 = window_bounds.y + window_bounds.height * roi.y_start
-            x1 = window_bounds.x + window_bounds.width * roi.x_end
-            y1 = window_bounds.y + window_bounds.height * roi.y_end
-            
-            # Since the window is fullscreen on the primary monitor, 
-            # absolute screen points == canvas points.
+            xs = min(1.0, max(0.0, roi.x_start + settings.roi_shift_x))
+            xe = min(1.0, max(0.0, roi.x_end + settings.roi_shift_x))
+            ys = min(1.0, max(0.0, roi.y_start + settings.roi_shift_y))
+            ye = min(1.0, max(0.0, roi.y_end + settings.roi_shift_y))
+            x0 = eff_x + eff_w * xs - self.monitor_left
+            y0 = eff_y + eff_h * ys - self.monitor_top
+            x1 = eff_x + eff_w * xe - self.monitor_left
+            y1 = eff_y + eff_h * ye - self.monitor_top
             rect_id = self.canvas.create_rectangle(
                 x0, y0, x1, y1, outline=color, width=2, dash=(6, 4)
             )
             self.drawn_rects[mode] = rect_id
 
     def _logical_monitor_left(self):
-        # We assume the calibration window is on the primary monitor (0,0)
-        return 0
+        return self.monitor_left
 
     def _logical_monitor_top(self):
-        return 0
+        return self.monitor_top
 
     def _bind_events(self):
         self.canvas.bind("<ButtonPress-1>", self._on_press)

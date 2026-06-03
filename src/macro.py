@@ -14,6 +14,9 @@ import threading
 import time
 from typing import Callable, Optional, List
 
+from src.movement_tracker import MovementTracker
+from src.vision import VisionSnapshot
+
 logger = logging.getLogger("macro")
 
 
@@ -118,14 +121,86 @@ class MacroEngine:
         self._last_catch_time = 0.0
         self._reeling_start_time = 0.0
         # Hysteresis counters for reeling exits
-        self._success_confirm_count = 0
         self._fail_confirm_count = 0
         self._bar_gone_confirm_count = 0
-        # Finish-capture debounce counter (separate from success counter to prevent VFX flashes)
-        self._finish_confirm_count = 0
+        # Progress-based finish debounce (isolated from bar-gone to resist VFX flashes)
+        self._progress_finish_count = 0
+        self._progress_finish_low_count = 0
+        self._peak_progress = 0.0
         # Action dwell / rate limiting for control stability
         self._last_action_time = 0.0
         self._last_action_type = None  # 'hold', 'release', 'rapid_click'
+        self._last_shake_click_time = 0.0
+        self._saw_midgame_progress = False
+        self._prev_progress = 0.0
+        self._fish_tracker = MovementTracker()
+        self._last_live_minigame_time = 0.0
+        self._near_finish_streak = 0
+        self._smoothed_progress = 0.0
+        self._trusted_peak = 0.0
+        self._raw_peak_progress = 0.0
+        self._last_progress_gain_time = 0.0
+        self._progress_collapse_count = 0
+        self._reel_stall_count = 0
+        self._post_catch_armed = True
+        self._post_catch_clear_count = 0
+        self._bite_confirm_count = 0
+        self._expecting_bite_until = 0.0
+        self.status_hint = "Idle"
+        self._last_hunt_log_time = 0.0
+        self._vision_lock = threading.Lock()
+        self._vision_snapshot = VisionSnapshot()
+
+    def get_vision_snapshot(self) -> VisionSnapshot:
+        """Latest annotated frame + telemetry for the GUI live view."""
+        with self._vision_lock:
+            snap = self._vision_snapshot
+            frame_copy = snap.frame_bgr.copy() if snap.frame_bgr is not None else None
+            return VisionSnapshot(
+                frame_bgr=frame_copy,
+                fish_x=snap.fish_x,
+                predicted_fish_x=snap.predicted_fish_x,
+                bar_left=snap.bar_left,
+                bar_right=snap.bar_right,
+                bar_center=snap.bar_center,
+                effective_bar=snap.effective_bar,
+                progress_raw=snap.progress_raw,
+                progress_smooth=snap.progress_smooth,
+                peak_progress=snap.peak_progress,
+                on_target=snap.on_target,
+                pd_score=snap.pd_score,
+                error=snap.error,
+                fish_velocity=snap.fish_velocity,
+                bar_velocity=snap.bar_velocity,
+                last_action=snap.last_action,
+                catch_allowed=snap.catch_allowed,
+                macro_state=snap.macro_state,
+                extras=dict(snap.extras),
+            )
+
+    def _publish_vision(self, frame_bgr, result, telemetry: dict) -> None:
+        with self._vision_lock:
+            self._vision_snapshot = VisionSnapshot(
+                frame_bgr=frame_bgr,
+                fish_x=result.fish_x,
+                predicted_fish_x=telemetry.get("predicted_fish_x"),
+                bar_left=result.bar_left,
+                bar_right=result.bar_right,
+                bar_center=telemetry.get("bar_center"),
+                effective_bar=telemetry.get("effective_bar"),
+                progress_raw=result.progress,
+                progress_smooth=telemetry.get("progress_smooth", 0.0),
+                peak_progress=telemetry.get("peak_progress", 0.0),
+                on_target=result.on_target,
+                pd_score=telemetry.get("pd_score", 0.0),
+                error=telemetry.get("error", 0.0),
+                fish_velocity=telemetry.get("fish_velocity", 0.0),
+                bar_velocity=telemetry.get("bar_velocity", 0.0),
+                last_action=telemetry.get("last_action", ""),
+                catch_allowed=telemetry.get("catch_allowed", False),
+                macro_state=self.state.value,
+                extras=telemetry.get("extras", {}),
+            )
 
     # ─── Callback Registration ────────────────────────────────────
 
@@ -270,6 +345,478 @@ class MacroEngine:
             logger.info("Macro loop ended (%s)", reason)
             self._emit_log(f"Macro loop ended ({reason})")
 
+    def _begin_reeling_session(self):
+        """Reset per-catch tracking when entering the reeling minigame."""
+        self._reel_no_detection_count = 0
+        self._last_progress = 0.0
+        self._peak_progress = 0.0
+        self._progress_stuck_count = 0
+        self._reeling_start_time = time.time()
+        self._fail_confirm_count = 0
+        self._bar_gone_confirm_count = 0
+        self._progress_finish_count = 0
+        self._progress_finish_low_count = 0
+        self._last_fish_x = None
+        self._last_bar_center = None
+        self._fish_velocity = 0.0
+        self._bar_velocity = 0.0
+        self._last_action_time = 0.0
+        self._last_action_type = None
+        self._saw_midgame_progress = False
+        self._prev_progress = 0.0
+        self._fish_tracker.reset()
+        self._last_live_minigame_time = time.time()
+        self._near_finish_streak = 0
+        self._smoothed_progress = 0.0
+        self._trusted_peak = 0.0
+        self._raw_peak_progress = 0.0
+        self._last_progress_gain_time = time.time()
+        self._progress_collapse_count = 0
+        self._reel_stall_count = 0
+
+    def _reset_post_catch_gate(self) -> None:
+        """Require the minigame UI to clear before the next bite can start."""
+        self._post_catch_armed = False
+        self._post_catch_clear_count = 0
+        self._bite_confirm_count = 0
+
+    def _minigame_ui_clear(self, result) -> bool:
+        """True when catch/reel UI is gone enough to hunt for a fresh bite."""
+        if self._minigame_ready(result):
+            return False
+        if result.bite_confirmed:
+            return False
+        if result.progress >= 0.10:
+            return False
+        if result.fish_x is not None and result.bar_active:
+            return False
+        return True
+
+    def _arm_for_cast_bite(self, settings) -> None:
+        """After cast release, hunt immediately — do not wait for UI clear frames."""
+        self._expecting_bite_until = time.time() + settings.post_cast_bite_window
+        self._post_catch_armed = True
+        self._post_catch_clear_count = settings.post_catch_clear_frames
+        self._bite_confirm_count = 0
+
+    def _expecting_cast_bite(self) -> bool:
+        return time.time() < self._expecting_bite_until
+
+    def _can_hunt_new_bite(self, result, settings) -> bool:
+        if time.time() - self._last_catch_time < settings.post_catch_lockout_seconds:
+            self._post_catch_clear_count = 0
+            return False
+        if self._expecting_cast_bite():
+            return True
+        if self._post_catch_armed:
+            return True
+        if self._minigame_ui_clear(result):
+            self._post_catch_clear_count += 1
+        else:
+            self._post_catch_clear_count = 0
+        if self._post_catch_clear_count >= settings.post_catch_clear_frames:
+            self._post_catch_armed = True
+        return self._post_catch_armed
+
+    def _reeling_trigger_strength(self, result, settings) -> int:
+        """Higher = more confident the reeling minigame has started."""
+        if self._minigame_ready(result):
+            return 3
+        if result.bite_confirmed and result.fish_x is not None:
+            return 2
+        if (
+            result.fish_x is not None
+            and result.bar_active
+            and result.progress >= settings.bite_progress_threshold
+        ):
+            return 1
+        return 0
+
+    def _should_start_reeling(self, result, settings) -> bool:
+        strength = self._reeling_trigger_strength(result, settings)
+        if strength == 0:
+            self._bite_confirm_count = 0
+            return False
+        if self._expecting_cast_bite() or strength >= 3:
+            required = 1
+        else:
+            required = settings.bite_confirm_frames
+        self._bite_confirm_count += 1
+        return self._bite_confirm_count >= required
+
+    @staticmethod
+    def _fish_inside_bar(
+        fish_x: Optional[float],
+        bar_left: Optional[float],
+        bar_right: Optional[float],
+        margin: float = 0.02,
+    ) -> Optional[bool]:
+        if fish_x is None or bar_left is None or bar_right is None:
+            return None
+        return (bar_left + margin) <= fish_x <= (bar_right - margin)
+
+    def _hunt_status_hint(self, result, settings) -> str:
+        """Explain what the macro sees while waiting to bite."""
+        if time.time() - self._last_catch_time < settings.post_catch_lockout_seconds:
+            remain = settings.post_catch_lockout_seconds - (
+                time.time() - self._last_catch_time
+            )
+            return f"Post-catch cooldown ({remain:.1f}s left)"
+
+        strength = self._reeling_trigger_strength(result, settings)
+        if strength > 0:
+            if self._bite_confirm_count + 1 >= (
+                1 if self._expecting_cast_bite() or strength >= 3 else settings.bite_confirm_frames
+            ):
+                return f"Bite detected (signal {strength}/3) — starting reel"
+            return (
+                f"Bite signal {strength}/3 — confirming "
+                f"{self._bite_confirm_count + 1}/"
+                f"{settings.bite_confirm_frames if strength < 3 and not self._expecting_cast_bite() else 1}"
+            )
+
+        if self._expecting_cast_bite():
+            remain = self._expecting_bite_until - time.time()
+            return f"Watching for instant bite after cast ({remain:.1f}s left)"
+
+        if not self._post_catch_armed:
+            return (
+                f"Waiting for catch UI to clear "
+                f"({self._post_catch_clear_count}/{settings.post_catch_clear_frames})"
+            )
+
+        parts = []
+        if result.fish_x is not None:
+            parts.append("fish")
+        if result.bar_left is not None:
+            parts.append("bar")
+        if result.progress >= settings.bite_progress_threshold:
+            parts.append(f"prog {result.progress:.0%}")
+        if result.bite_confirmed:
+            parts.append("bite_ok")
+        if parts:
+            return f"Hunting — sees {', '.join(parts)} (no full bite yet)"
+        return "Hunting — no bite signal yet"
+
+    def _publish_hunt_status(self, result, settings) -> None:
+        self.status_hint = self._hunt_status_hint(result, settings)
+        if not settings.show_live_vision:
+            return
+        geom = self._fish_inside_bar(result.fish_x, result.bar_left, result.bar_right)
+        with self._vision_lock:
+            self._vision_snapshot = VisionSnapshot(
+                fish_x=result.fish_x,
+                bar_left=result.bar_left,
+                bar_right=result.bar_right,
+                progress_raw=result.progress,
+                on_target=result.on_target,
+                macro_state=self.state.value,
+                extras={
+                    "hunt": self.status_hint,
+                    "bite_confirmed": result.bite_confirmed,
+                    "bar_active": result.bar_active,
+                    "armed": self._post_catch_armed,
+                    "expecting_cast_bite": self._expecting_cast_bite(),
+                    "geom_on_target": geom,
+                    "signal": self._reeling_trigger_strength(result, settings),
+                },
+            )
+
+    def _maybe_log_hunt_status(self, settings) -> None:
+        now = time.time()
+        if now - self._last_hunt_log_time < 3.0:
+            return
+        self._last_hunt_log_time = now
+        if self.state in (MacroState.WAITING, MacroState.CASTING, MacroState.COMPLETE):
+            self._emit_log(f"📡 {self.status_hint}")
+
+    def _try_start_reeling(self, result, settings, source: str = "") -> bool:
+        if not self._can_hunt_new_bite(result, settings):
+            return False
+        if not self._should_start_reeling(result, settings):
+            return False
+        label = f" ({source})" if source else ""
+        logger.info("Minigame ready%s — fish on the line!", label)
+        self._emit_log(f"🐟 Fish on the line!{label}")
+        self._begin_reeling_session()
+        self._set_state(MacroState.REELING)
+        return True
+
+    def _update_progress_tracking(self, raw_progress: float, settings) -> float:
+        """Smooth progress and build a spike-resistant trusted peak."""
+        alpha = settings.progress_smoothing
+        if self._smoothed_progress <= 0.0 and raw_progress > 0.0:
+            self._smoothed_progress = raw_progress
+        else:
+            self._smoothed_progress = (
+                self._smoothed_progress * (1.0 - alpha)
+            ) + (raw_progress * alpha)
+
+        if raw_progress > self._raw_peak_progress + 0.008:
+            self._last_progress_gain_time = time.time()
+        self._raw_peak_progress = max(self._raw_peak_progress, raw_progress)
+
+        cap = self._trusted_peak + settings.max_progress_tick
+        if self._smoothed_progress <= cap + 0.001:
+            self._trusted_peak = max(self._trusted_peak, self._smoothed_progress)
+
+        # Finish gates use slow trusted peak; telemetry shows best-known fill level
+        self._peak_progress = max(
+            self._trusted_peak,
+            self._smoothed_progress,
+            self._raw_peak_progress,
+        )
+        return self._smoothed_progress
+
+    def _minigame_ready(self, result) -> bool:
+        """True when the full reeling UI is present (not cast VFX / slash effects)."""
+        return (
+            result.fish_x is not None
+            and result.bar_left is not None
+            and result.bar_right is not None
+        )
+
+    def _try_click_shake(self, settings, result) -> bool:
+        """Click a visible SHAKE prompt if enabled and off cooldown."""
+        if not settings.shake_enabled or result.shake_pos is None:
+            return False
+        confidence = getattr(result, "shake_confidence", 0.0)
+        if confidence < settings.shake_min_confidence:
+            logger.debug(
+                "Shake ignored — confidence %.2f < %.2f",
+                confidence,
+                settings.shake_min_confidence,
+            )
+            return False
+        now = time.time()
+        if now - self._last_shake_click_time < settings.shake_click_cooldown_seconds:
+            return False
+        x, y = result.shake_pos
+        self.controller.mouse_click(int(x), int(y))
+        self._last_shake_click_time = now
+        self._emit_log("Clicked SHAKE button")
+        return True
+
+    def _progress_finish_plausible(self, progress: float, max_progress_jump: float) -> bool:
+        """Reject single-frame VFX spikes that jump progress unrealistically."""
+        if self._last_progress < 0.75 and progress - self._last_progress > max_progress_jump:
+            logger.debug(
+                "Ignoring progress finish spike (%.2f -> %.2f)",
+                self._last_progress,
+                progress,
+            )
+            return False
+        return True
+
+    def _catch_allowed(self, settings, elapsed: float) -> bool:
+        """Shared gate for any catch/fail completion during reeling."""
+        if elapsed < settings.reeling_guard_seconds:
+            return False
+        if not self._saw_midgame_progress:
+            return False
+        if self._peak_progress < settings.min_midgame_progress:
+            return False
+        if elapsed >= settings.min_catch_seconds:
+            return True
+        return elapsed >= settings.fast_catch_min_seconds
+
+    def _progress_finish_valid(
+        self,
+        settings,
+        smooth_progress: float,
+        max_progress_jump: float,
+    ) -> bool:
+        """True when smoothed progress looks like a real full catch, not mid-fight VFX."""
+        if smooth_progress < settings.finish_progress_threshold:
+            return False
+        if not self._progress_finish_plausible(smooth_progress, max_progress_jump):
+            return False
+        if self._trusted_peak < settings.min_midgame_progress:
+            return False
+        if smooth_progress < self._trusted_peak - 0.15:
+            return False
+        if (
+            self._trusted_peak < settings.finish_progress_threshold - 0.06
+            and self._peak_progress < settings.finish_progress_threshold - 0.04
+        ):
+            return False
+        return True
+
+    def _progress_collapsed_likely_ended(self, result, settings) -> bool:
+        """Fight ended: progress dropped after a real mid-fight fill (post-catch UI)."""
+        if self._raw_peak_progress < settings.progress_collapse_min_peak:
+            return False
+        if result.progress > self._raw_peak_progress * 0.35:
+            return False
+        if (
+            result.fish_x is not None
+            and result.bar_left is not None
+            and result.bar_right is not None
+            and time.time() - self._last_live_minigame_time < 0.45
+        ):
+            return False
+        return True
+
+    def _reel_stall_likely_ended(self, result, settings, elapsed: float) -> bool:
+        """Long fight with no progress gain — minigame likely finished but UI lingers."""
+        if elapsed < settings.min_catch_seconds:
+            return False
+        if self._raw_peak_progress < settings.reel_stall_min_peak:
+            return False
+        if time.time() - self._last_progress_gain_time < settings.reel_stall_seconds:
+            return False
+        if result.progress > self._raw_peak_progress * 0.5:
+            return False
+        if (
+            result.fish_x is not None
+            and result.bar_left is not None
+            and result.bar_right is not None
+            and time.time() - self._last_live_minigame_time < 0.5
+        ):
+            return False
+        return True
+
+    def _bar_gone_likely_ended(self, result) -> bool:
+        """Minigame UI is really gone — not a brief rod VFX overlay."""
+        if result.bar_active:
+            return False
+        if result.fish_x is not None:
+            return False
+        if result.bite_confirmed:
+            return False
+        if time.time() - self._last_live_minigame_time < 0.35:
+            return False
+        return result.progress < max(0.10, self._peak_progress * 0.15)
+
+    def _bar_gone_means_catch(self, settings) -> bool:
+        """Bar disappeared after a near-complete reel, not mid-fight."""
+        session_peak = max(self._peak_progress, self._raw_peak_progress)
+        if session_peak < settings.peak_progress_catch_threshold:
+            return False
+        return self._prev_progress >= session_peak - settings.bar_gone_near_peak_delta
+
+    def _chase_wants_hold(
+        self,
+        fish_x: float,
+        bar_left: float,
+        bar_right: float,
+        bar_center: float,
+        target_fish_x: float,
+        off_state: bool,
+        settings,
+    ) -> bool:
+        """Whether the bar should move right (hold) to chase the fish."""
+        edge = settings.left_stall_bar_edge
+        if off_state and bar_left < edge:
+            return target_fish_x > bar_left + 0.05 or fish_x > bar_left + 0.04
+        return target_fish_x >= bar_center
+
+    def _should_bypass_action_cooldown(
+        self,
+        bar_left: float,
+        fish_x: float,
+        off_state: bool,
+        settings,
+    ) -> bool:
+        """Recover from left-edge stalls even when dwell timer is active."""
+        if not off_state or bar_left >= settings.left_stall_bar_edge:
+            return False
+        return fish_x > bar_left + 0.06
+
+    def _update_velocities(
+        self,
+        fish_x: float,
+        bar_center: float,
+        fish_alpha: float,
+        bar_alpha: float,
+    ) -> None:
+        if self._last_fish_x is not None:
+            inst_fish_v = fish_x - self._last_fish_x
+            self._fish_velocity = (self._fish_velocity * (1.0 - fish_alpha)) + (inst_fish_v * fish_alpha)
+        self._last_fish_x = fish_x
+
+        if self._last_bar_center is not None:
+            inst_bar_v = bar_center - self._last_bar_center
+            self._bar_velocity = (self._bar_velocity * (1.0 - bar_alpha)) + (inst_bar_v * bar_alpha)
+        self._last_bar_center = bar_center
+
+    def _fish_speed_per_second(self, settings) -> float:
+        """Best estimate of how fast the fish is moving right now."""
+        tick = max(settings.scan_interval_ms / 1000.0, 0.02)
+        v_frame = abs(self._fish_velocity) / tick
+        v_recent = self._fish_tracker.speed(settings.prediction_recent_window_seconds)
+        return max(v_recent, v_frame)
+
+    def _prediction_motion_scale(self, settings) -> float:
+        """0 = fish treated as still; 1 = full prediction blend."""
+        speed = self._fish_speed_per_second(settings)
+        low = settings.prediction_stationary_speed
+        high = low * 2.5
+        if speed <= low:
+            return 0.0
+        if speed >= high:
+            return 1.0
+        return (speed - low) / (high - low)
+
+    def _predicted_fish_x(self, fish_x: float, settings) -> float:
+        motion = self._prediction_motion_scale(settings)
+        if motion <= 0.0:
+            return fish_x
+
+        lookahead = settings.fish_prediction_ms / 1000.0
+        use_accel = settings.prediction_use_acceleration and motion >= 0.35
+        predicted = self._fish_tracker.predict(
+            fish_x,
+            lookahead,
+            use_acceleration=use_accel,
+            window_seconds=settings.prediction_recent_window_seconds,
+        )
+        weight = settings.prediction_weight * motion
+        blended = (fish_x * (1.0 - weight)) + (predicted * weight)
+        return max(0.0, min(1.0, blended))
+
+    def _finish_catch(self, result, settings, reason: str) -> None:
+        """Record a successful catch and transition to COMPLETE."""
+        self.controller.mouse_release()
+        perfect = (
+            result.progress >= 0.995
+            or self._peak_progress >= settings.finish_progress_threshold
+        )
+        self.stats.record_catch(perfect=perfect)
+        self._emit_log(f"✅ Fish caught! ({reason})")
+        self._emit_stats()
+        self._last_catch_time = time.time()
+        self._reset_post_catch_gate()
+        self._set_state(MacroState.COMPLETE)
+
+    def _arrival_lead_bias(
+        self,
+        fish_x: float,
+        bar_center: float,
+        settings,
+    ) -> float:
+        """digmacro-style lead: nudge control when fish is moving toward the bar."""
+        if not settings.prediction_arrival_lead:
+            return 0.0
+        motion = self._prediction_motion_scale(settings)
+        if motion < 0.25:
+            return 0.0
+        arrival = self._fish_tracker.arrival_seconds(bar_center, fish_x)
+        if arrival is None:
+            return 0.0
+        lookahead = settings.fish_prediction_ms / 1000.0
+        if arrival <= 0 or arrival > lookahead * 1.5:
+            return 0.0
+        v = self._fish_tracker.recent_velocity(settings.prediction_recent_window_seconds)
+        direction = 1.0 if v > 0 else -1.0
+        bias = direction * 0.04 * (1.0 - (arrival / max(lookahead, 1e-3)))
+        return bias * motion
+
+    def _effective_bar_center(self, bar_center: float, settings) -> float:
+        """Bar center adjusted for coasting — won't instantly reverse after hold/release."""
+        drift = self._bar_velocity * settings.bar_momentum_factor
+        return max(0.0, min(1.0, bar_center + drift))
+
     # ─── State Handlers ───────────────────────────────────────────
 
     def _do_casting(self, settings):
@@ -293,17 +840,29 @@ class MacroEngine:
         # Wait for the cast hold time (checking killswitch periodically)
         elapsed = 0.0
         while elapsed < settings.cast_hold_time and not self._should_stop():
+            result = self.detector.detect_all()
+            if self._try_start_reeling(result, settings, "during cast"):
+                self.controller.mouse_release()
+                return
             time.sleep(0.05)
             elapsed += 0.05
 
-        # Release to cast
+        # Release to cast — instant-catch rods often bite in the same moment
         self.controller.mouse_release()
+        self._arm_for_cast_bite(settings)
 
         if self._should_stop():
             return
 
-        # Brief wait for the cast animation
-        time.sleep(0.8)
+        interval = max(0.02, settings.scan_interval_ms / 1000.0)
+        post_cast = 0.0
+        while post_cast < settings.post_cast_bite_window and not self._should_stop():
+            result = self.detector.detect_all()
+            self._publish_hunt_status(result, settings)
+            if self._try_start_reeling(result, settings, "after cast"):
+                return
+            time.sleep(interval)
+            post_cast += interval
 
         self._set_state(MacroState.WAITING)
 
@@ -319,32 +878,13 @@ class MacroEngine:
             return
 
         result = self.detector.detect_all()
-        
-        # Post-catch lockout (ignore bites for 4s after a catch to clear animations/text)
-        if time.time() - self._last_catch_time < 4.0:
+        self._publish_hunt_status(result, settings)
+        self._maybe_log_hunt_status(settings)
+
+        if self._try_click_shake(settings, result):
             return
 
-        if result.bite_confirmed:
-            # Minigame bar detected — fish has bitten!
-            logger.info("Bite confirmed — fish on the line!")
-            self._emit_log("🐟 Fish on the line!")
-            self._reel_no_detection_count = 0
-            self._last_progress = 0.0
-            self._progress_stuck_count = 0
-            self._reeling_start_time = time.time()
-            # Reset hysteresis counters when starting reeling
-            self._success_confirm_count = 0
-            self._fail_confirm_count = 0
-            self._bar_gone_confirm_count = 0
-            # Reset finish-capture debounce counter
-            self._finish_confirm_count = 0
-            self._last_action_time = 0.0
-            self._last_action_type = None
-            self._set_state(MacroState.REELING)
-
-        elif result.shake_pos is not None and settings.shake_enabled:
-            # Shake button detected
-            self._set_state(MacroState.SHAKING)
+        self._try_start_reeling(result, settings)
 
     def _do_shaking(self, settings):
         """
@@ -357,32 +897,13 @@ class MacroEngine:
             return
 
         result = self.detector.detect_all()
-        
-        # Post-catch lockout
-        if time.time() - self._last_catch_time < 4.0:
+        self._publish_hunt_status(result, settings)
+
+        if self._try_click_shake(settings, result):
             return
 
-        if result.bite_confirmed:
-            # Bar appeared — transition to reeling
-            self._emit_log("🐟 Fish on the line!")
-            self._reel_no_detection_count = 0
-            self._last_progress = 0.0
-            self._progress_stuck_count = 0
-            # Reset hysteresis counters when starting reeling
-            self._success_confirm_count = 0
-            self._fail_confirm_count = 0
-            self._bar_gone_confirm_count = 0
-            self._last_action_time = 0.0
-            self._last_action_type = None
-            self._set_state(MacroState.REELING)
+        if self._try_start_reeling(result, settings):
             return
-
-        if result.shake_pos is not None:
-            # Click the shake button
-            x, y = result.shake_pos
-            self.controller.mouse_click(int(x), int(y))
-            self._emit_log("Clicked SHAKE button")
-            time.sleep(0.15)  # Brief cooldown after clicking
 
     def _do_reeling(self, settings):
         """
@@ -401,117 +922,161 @@ class MacroEngine:
             return
 
         result = self.detector.detect_all()
+        prev_progress = self._prev_progress
 
-        reeling_guard_seconds = settings.reeling_guard_seconds
+        if (
+            result.fish_x is not None
+            and result.bar_left is not None
+            and result.bar_right is not None
+        ):
+            self._last_live_minigame_time = time.time()
+
         success_confirm_frames = settings.success_confirm_frames
         fail_confirm_frames = settings.fail_confirm_frames
         bar_gone_confirm_frames = settings.bar_gone_confirm_frames
+        finish_progress_threshold = settings.finish_progress_threshold
+        max_progress_jump = settings.max_progress_jump
+        progress_finish_reset_frames = settings.progress_finish_reset_frames
         action_min_dwell_seconds = settings.action_min_dwell_seconds
         stable_hysteresis_multiplier = settings.stable_hysteresis_multiplier
         pd_deadband = settings.pd_deadband
-        guard_success_confirm_frames = success_confirm_frames + 2
-
-        # ─── Reeling Guard: Block premature completion/failure ─────────
         elapsed = time.time() - self._reeling_start_time
-        if elapsed < reeling_guard_seconds:
-            # During the guard window, still run the control loop but block exits
-            # We'll skip the exit checks below by using a flag or early return pattern
-            # For now, we'll let it fall through but modify exit logic to respect guard
-            pass  # Will handle in exit logic below
+        catch_allowed = False
 
-        # Check if bar has disappeared (minigame over)
-        # 1. Immediate End-Game Detection
-        
-        # Success: Progress bar reaches the end
-        if result.progress > 0.98:
-            self._finish_confirm_count += 1
-            logger.debug("Finish confirmation: %d/%d consecutive", self._finish_confirm_count, success_confirm_frames)
-            if self._finish_confirm_count >= success_confirm_frames:
-                # Guard check: only allow success if past guard window OR we have strong confirmation
-                elapsed = time.time() - self._reeling_start_time
-                if elapsed >= reeling_guard_seconds or self._finish_confirm_count >= guard_success_confirm_frames:
-                    self.controller.mouse_release()
-                    self.stats.record_catch(perfect=(result.progress > 0.995))
-                    self._emit_log("✅ Fish caught! (Progress Full)")
-                    self._emit_stats()
-                    self._last_catch_time = time.time()
-                    self._set_state(MacroState.COMPLETE)
-                    self._finish_confirm_count = 0
+        smooth_progress = self._update_progress_tracking(result.progress, settings)
+
+        if elapsed >= settings.reeling_guard_seconds:
+            if self._peak_progress >= settings.min_midgame_progress:
+                self._saw_midgame_progress = True
+            catch_allowed = self._catch_allowed(settings, elapsed)
+
+        # ─── Progress-based success (debounced, VFX-resistant) ───────
+        if catch_allowed:
+            progress_finish_ok = self._progress_finish_valid(
+                settings, smooth_progress, max_progress_jump
+            )
+            if progress_finish_ok:
+                self._progress_finish_count += 1
+                self._progress_finish_low_count = 0
+                logger.debug(
+                    "Progress finish confirmation: %d/%d consecutive",
+                    self._progress_finish_count,
+                    success_confirm_frames,
+                )
+                if self._progress_finish_count >= success_confirm_frames:
+                    self._finish_catch(result, settings, "Progress Full")
                     return
-                else:
-                    logger.debug("Guard blocking success exit (%.1fs < %.1fs)", elapsed, reeling_guard_seconds)
-        else:
-            self._finish_confirm_count = 0  # reset on non-success readings
+            else:
+                self._progress_finish_low_count += 1
+                if self._progress_finish_low_count >= progress_finish_reset_frames:
+                    self._progress_finish_count = 0
 
-        # Failure: Progress reached zero and the bar disappeared
-        # GRACE PERIOD: Ignore zero-progress failures in the first 2 seconds of reeling
-        # to allow for intro animations and progress bar appearing.
-        if not result.bite_confirmed and result.progress < 0.01:
-            if time.time() - self._reeling_start_time > 2.0:
+            if (
+                smooth_progress >= settings.finish_progress_threshold - 0.02
+                and self._peak_progress >= settings.finish_progress_threshold - 0.06
+            ):
+                self._near_finish_streak += 1
+            else:
+                self._near_finish_streak = 0
+
+            if self._near_finish_streak >= settings.near_finish_confirm_frames:
+                self._finish_catch(result, settings, "Progress Near Full")
+                return
+
+            if self._progress_collapsed_likely_ended(result, settings):
+                self._progress_collapse_count += 1
+                if (
+                    self._progress_collapse_count
+                    >= settings.progress_collapse_confirm_frames
+                ):
+                    self._finish_catch(result, settings, "Progress Collapsed")
+                    return
+            else:
+                self._progress_collapse_count = 0
+
+            if self._reel_stall_likely_ended(result, settings, elapsed):
+                self._reel_stall_count += 1
+                if self._reel_stall_count >= 8:
+                    self._finish_catch(result, settings, "Reel Stall")
+                    return
+            else:
+                self._reel_stall_count = 0
+        else:
+            self._progress_finish_count = 0
+            self._progress_finish_low_count = 0
+            self._near_finish_streak = 0
+            self._progress_collapse_count = 0
+            self._reel_stall_count = 0
+
+        # ─── Failure: fish escaped (never started or fully drained) ─────
+        fight_never_started = self._peak_progress < settings.min_midgame_progress
+        if (
+            not result.bite_confirmed
+            and result.progress < 0.01
+            and (fight_never_started or self._prev_progress < 0.05)
+        ):
+            if elapsed > 2.0:
                 self._fail_confirm_count += 1
                 logger.debug("Fail confirmation: %d/%d consecutive", self._fail_confirm_count, fail_confirm_frames)
                 if self._fail_confirm_count >= fail_confirm_frames:
-                    # Guard check: only allow failure if past guard window
-                    elapsed = time.time() - self._reeling_start_time
-                    if elapsed >= reeling_guard_seconds:
+                    if catch_allowed or fight_never_started:
                         self.controller.mouse_release()
                         self.stats.record_fail()
                         self._emit_log("❌ Fish got away! (Progress Empty)")
                         self._emit_stats()
                         self._last_catch_time = time.time()
+                        self._reset_post_catch_gate()
                         self._set_state(MacroState.COMPLETE)
-                        self._fail_confirm_count = 0
                         return
-                    else:
-                        logger.debug("Guard blocking failure exit (%.1fs < %.1fs)", elapsed, reeling_guard_seconds)
+                    logger.debug("Guard blocking failure exit (%.1fs)", elapsed)
                 else:
-                    # Hover during flicker/start while confirming failure
                     self.controller.rapid_click(count=1, interval=0.0)
                     return
             else:
-                # Hover during flicker/start
                 self.controller.rapid_click(count=1, interval=0.0)
                 return
         else:
             self._fail_confirm_count = 0
 
-        # Handle general bar disappearance (might be success text blocking progress bar)
-        if not result.bar_active:
-            self._finish_confirm_count += 1
-            logger.debug("Finish confirmation (bar-gone): %d/%d consecutive", self._finish_confirm_count, bar_gone_confirm_frames)
-            if self._finish_confirm_count >= bar_gone_confirm_frames:
-                # Guard check: only allow bar-gone exit if past guard window
-                elapsed = time.time() - self._reeling_start_time
-                if elapsed >= reeling_guard_seconds:
-                    self.controller.mouse_release()
-                    
-                    # Success criteria fallback: 
-                    # Progress WAS very high just before it disappeared
-                    if self._last_progress > 0.90:
-                        self.stats.record_catch(perfect=(self._last_progress > 0.98))
-                        self._emit_log("✅ Fish caught! (Bar Gone)")
-                    else:
-                        self.stats.record_fail()
-                        self._emit_log("❌ Fish got away! (Bar Gone)")
-                    
-                    self._last_catch_time = time.time()
-                    self._emit_stats()
-                    self._set_state(MacroState.COMPLETE)
-                    self._finish_confirm_count = 0
-                    return
+        # ─── Bar gone (minigame actually ended — not mid-fight VFX) ─────
+        if catch_allowed and self._bar_gone_likely_ended(result):
+            self._bar_gone_confirm_count += 1
+            required_gone = bar_gone_confirm_frames
+            if self._peak_progress < 0.85:
+                required_gone = int(bar_gone_confirm_frames * 1.5)
+            elif self._peak_progress >= 0.92:
+                required_gone = max(8, bar_gone_confirm_frames // 2)
+            logger.debug(
+                "Bar-gone confirmation: %d/%d consecutive (peak=%.2f prev=%.2f)",
+                self._bar_gone_confirm_count,
+                required_gone,
+                self._peak_progress,
+                prev_progress,
+            )
+            if self._bar_gone_confirm_count >= required_gone:
+                if self._bar_gone_means_catch(settings):
+                    self._finish_catch(result, settings, "Bar Gone")
                 else:
-                    logger.debug("Guard blocking bar-gone exit (%.1fs < %.1fs)", elapsed, reeling_guard_seconds)
-            else:
-                # Hover during flickering while confirming bar gone
-                self.controller.rapid_click(count=1, interval=0.0)
+                    self.controller.mouse_release()
+                    self.stats.record_fail()
+                    self._emit_log("❌ Fish got away! (Bar Gone)")
+                    self._emit_stats()
+                    self._last_catch_time = time.time()
+                    self._reset_post_catch_gate()
+                    self._set_state(MacroState.COMPLETE)
                 return
-        else:
-            self._finish_confirm_count = 0
+            self.controller.rapid_click(count=1, interval=0.0)
+            return
+        elif self._bar_gone_confirm_count > 0 and not self._bar_gone_likely_ended(result):
+            self._bar_gone_confirm_count = max(0, self._bar_gone_confirm_count - 2)
+        elif not catch_allowed:
+            self._bar_gone_confirm_count = 0
 
         # Reset no-detection counter since something is visible
         self._reel_no_detection_count = 0
 
         # Track progress and target status
+        self._prev_progress = result.progress
         self._last_progress = result.progress
         self.last_on_target = result.on_target
 
@@ -525,99 +1090,132 @@ class MacroEngine:
             self.controller.rapid_click(count=1, interval=0.0)
             return
 
-        # 1. Tracking and Velocities
-        # Reduced smoothing (higher alpha) to reduce phase lag/delay
-        alpha = 0.60
-        
-        # Fish velocity
-        if self._last_fish_x is not None:
-            inst_fish_v = (fish_x - self._last_fish_x)
-            self._fish_velocity = (self._fish_velocity * (1.0 - alpha)) + (inst_fish_v * alpha)
-        self._last_fish_x = fish_x
-        
-        # Bar velocity
         bar_center = (bar_left + bar_right) / 2.0
-        if self._last_bar_center is not None:
-            inst_bar_v = (bar_center - self._last_bar_center)
-            self._bar_velocity = (self._bar_velocity * (1.0 - alpha)) + (inst_bar_v * alpha)
-        self._last_bar_center = bar_center
+        self._fish_tracker.add_sample(fish_x)
+        self._update_velocities(
+            fish_x,
+            bar_center,
+            settings.fish_velocity_smoothing,
+            settings.bar_velocity_smoothing,
+        )
 
-         # 2. PD-Control Decision Logic (Proportional-Derivative)
-        # error: how far the fish is from the bar center
-        # velocity_diff: how fast the fish is moving relative to the bar
-        error = fish_x - bar_center
+        target_fish_x = self._predicted_fish_x(fish_x, settings)
+        effective_bar = self._effective_bar_center(bar_center, settings)
+
+        # PD control with prediction + bar momentum + arrival lead
+        error = target_fish_x - effective_bar
+        arrival_bias = self._arrival_lead_bias(fish_x, bar_center, settings)
         velocity_diff = self._fish_velocity - self._bar_velocity
-        
-        # More conservative gains to reduce overestimation when bar speed varies
-        kp = 0.3  # Reduced from 0.5 for less aggressive response
-        kd = 2.0  # Reduced from 3.5 for less derivative sensitivity
-        
-        # Boundary Awareness: Dampen derivative damping near walls to prevent 'bounce-panic'
+        velocity_diff = max(-0.12, min(0.12, velocity_diff))
+
+        kp = settings.control_kp
+        kd = settings.control_kd
+
         near_right_wall = bar_right > 0.96
         near_left_wall = bar_left < 0.04
         if (near_right_wall and self._bar_velocity > 0) or (near_left_wall and self._bar_velocity < 0):
-            kd = 0.5  # Further reduced near walls
-        
-        # Additional conservatism: reduce gains when velocity is high (indicating instability)
+            kd *= 0.4
+
         velocity_magnitude = abs(self._bar_velocity) + abs(self._fish_velocity)
-        if velocity_magnitude > 0.5:  # High velocity indicates instability
-            kp *= 0.5
-            kd *= 0.5
-        
-        # Bar-velocity compensation: feed-forward term to anticipate bar motion
-        # When bar moves left (negative velocity), bias right (positive score)
-        # When bar moves right (positive velocity), bias left (negative score)
-        k_vc = 0.15  # Conservative velocity compensation gain
-        velocity_compensation = -self._bar_velocity * k_vc
-        
-        pd_score = (kp * error) + (kd * velocity_diff) + velocity_compensation
+        if velocity_magnitude > 0.35:
+            kp *= 0.6
+            kd *= 0.6
+
+        velocity_compensation = 0.0
+        if abs(self._bar_velocity) > 0.015:
+            velocity_compensation = -self._bar_velocity * settings.control_bar_drift_gain
+
+        pd_score = (kp * error) + (kd * velocity_diff) + velocity_compensation + arrival_bias
         
         # PD-score deadband: prevent tiny oscillations from flipping direction
         
-        # Deadzone based on target status
-        deadzone = 0.05 if on_target else 0.01
-        
-        # Hysteresis: expand effective stable zone once settled
+        fish_outside_left = fish_x < bar_left + 0.02
+        fish_outside_right = fish_x > bar_right - 0.02
+        geom_on_target = self._fish_inside_bar(fish_x, bar_left, bar_right)
+        off_state = not on_target
+        if geom_on_target is False and on_target:
+            off_state = False
+        elif geom_on_target is True and not on_target:
+            off_state = True
+
+        if off_state or fish_outside_left or fish_outside_right:
+            kp *= settings.off_target_chase_gain
+            kd *= settings.off_target_chase_gain
+            pd_deadband = min(pd_deadband, 0.01)
+
+        deadzone = 0.05 if on_target else 0.0
         if self._last_action_type == 'rapid_click':
             hysteresis_deadzone = deadzone * stable_hysteresis_multiplier
         else:
             hysteresis_deadzone = deadzone
-        
-        # ─── Rate-limiting: Prevent action thrash ──────────────────────
+
         now = time.time()
         action_cooldown = (now - self._last_action_time < action_min_dwell_seconds)
-        
-        # 3. Decision Logic
-        if near_right_wall and fish_x > bar_center:
+        action = self._last_action_type or ""
+        bypass_cooldown = self._should_bypass_action_cooldown(
+            bar_left, fish_x, off_state, settings
+        )
+
+        def _apply_action(new_action: str, apply_fn) -> None:
+            nonlocal action
+            blocked = action_cooldown and new_action != self._last_action_type
+            if not blocked or bypass_cooldown:
+                apply_fn()
+                self._last_action_time = time.time()
+                self._last_action_type = new_action
+            action = new_action
+
+        needs_aggressive_chase = fish_outside_left or fish_outside_right
+        if not needs_aggressive_chase and off_state:
+            needs_aggressive_chase = abs(error) > 0.025
+
+        wants_hold = self._chase_wants_hold(
+            fish_x,
+            bar_left,
+            bar_right,
+            bar_center,
+            target_fish_x,
+            off_state,
+            settings,
+        )
+
+        if needs_aggressive_chase:
+            if wants_hold:
+                _apply_action("hold", self.controller.mouse_hold)
+            else:
+                _apply_action("release", self.controller.mouse_release)
+        elif near_right_wall and target_fish_x > bar_center:
             # At right limit and fish is right - stay pinned
             action = 'hold'
             if not (action_cooldown and action != self._last_action_type):
                 self.controller.mouse_hold()
                 self._last_action_time = time.time()
                 self._last_action_type = action
-        elif near_left_wall and fish_x < bar_center:
-            # At left limit and fish is left - stay pinned
-            action = 'release'
-            if not (action_cooldown and action != self._last_action_type):
-                self.controller.mouse_release()
-                self._last_action_time = time.time()
-                self._last_action_type = action
-        elif fish_x > bar_right - 0.01:
+        elif near_left_wall and target_fish_x < bar_left + 0.03:
+            # At left limit and fish is also on the left — stay pinned
+            _apply_action("release", self.controller.mouse_release)
+        elif off_state and bar_left < settings.left_stall_bar_edge and wants_hold:
+            # Orange/off bar collapsed left — pull bar right toward fish
+            _apply_action("hold", self.controller.mouse_hold)
+        elif target_fish_x > bar_right - 0.01:
             # Panic: Fish is escaping right
             action = 'hold'
             if not (action_cooldown and action != self._last_action_type):
                 self.controller.mouse_hold()
                 self._last_action_time = time.time()
                 self._last_action_type = action
-        elif fish_x < bar_left + 0.01:
+        elif target_fish_x < bar_left + 0.01:
             # Panic: Fish is escaping left
             action = 'release'
             if not (action_cooldown and action != self._last_action_type):
                 self.controller.mouse_release()
                 self._last_action_time = time.time()
                 self._last_action_type = action
-        elif abs(error) < hysteresis_deadzone and abs(self._bar_velocity) < 0.01:
-            # Stable
+        elif (
+            on_target
+            and abs(error) < hysteresis_deadzone
+            and abs(self._bar_velocity) < 0.02
+        ):
             action = 'rapid_click'
             if not (action_cooldown and action != self._last_action_type):
                 self.controller.rapid_click(count=1, interval=0.0)
@@ -647,12 +1245,49 @@ class MacroEngine:
                 self._last_action_time = time.time()
                 self._last_action_type = action
         else:
-            # Hover
             action = 'rapid_click'
             if not (action_cooldown and action != self._last_action_type):
                 self.controller.rapid_click(count=1, interval=0.0)
                 self._last_action_time = time.time()
                 self._last_action_type = action
+
+        if settings.show_live_vision and hasattr(self.detector, "capture_roi"):
+            bar_frame = self.detector.capture_roi(settings.bar_roi)
+            if bar_frame is not None:
+                vis = self.detector.get_debug_frame(
+                    bar_frame,
+                    result,
+                    extras={
+                        "predicted_fish_x": target_fish_x,
+                        "effective_bar": effective_bar,
+                        "progress_smooth": smooth_progress,
+                        "pd_score": pd_score,
+                        "last_action": action,
+                    },
+                )
+                self._publish_vision(
+                    vis,
+                    result,
+                    {
+                        "predicted_fish_x": target_fish_x,
+                        "bar_center": bar_center,
+                        "effective_bar": effective_bar,
+                        "progress_smooth": smooth_progress,
+                        "peak_progress": self._peak_progress,
+                        "pd_score": pd_score,
+                        "error": error,
+                        "fish_velocity": self._fish_velocity,
+                        "bar_velocity": self._bar_velocity,
+                        "last_action": action,
+                        "catch_allowed": catch_allowed,
+                        "extras": {
+                            "off_state": off_state,
+                            "fish_outside": fish_outside_left or fish_outside_right,
+                            "geom_on_target": geom_on_target,
+                            "color_on_target": on_target,
+                        },
+                    },
+                )
 
     def _do_complete(self, settings):
         """
@@ -664,12 +1299,17 @@ class MacroEngine:
             return
 
         self._emit_log(f"Waiting {settings.recast_delay}s before recast...")
+        self.status_hint = "Catch complete — waiting to recast"
 
-        # Wait for recast delay (check killswitch periodically)
+        # Wait for recast delay; poll so post-catch gate can arm before cast
         elapsed = 0.0
+        interval = max(0.05, settings.scan_interval_ms / 1000.0)
         while elapsed < settings.recast_delay and not self._should_stop():
-            time.sleep(0.1)
-            elapsed += 0.1
+            result = self.detector.detect_all()
+            self._can_hunt_new_bite(result, settings)
+            self._publish_hunt_status(result, settings)
+            time.sleep(interval)
+            elapsed += interval
 
         if self._should_stop():
             return

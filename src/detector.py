@@ -38,6 +38,7 @@ class DetectionResult:
     on_target: bool = False              # Whether the bar is currently over the fish (color-based)
     progress: float = 0.0                # 0.0–1.0 progress bar fill
     shake_pos: Optional[Tuple[int, int]] = None  # (x, y) screen coords of shake button
+    shake_confidence: float = 0.0  # 0–1 match quality for the SHAKE UI pattern
     debug_frame: Optional[np.ndarray] = None     # Annotated frame for GUI
 
 
@@ -118,13 +119,31 @@ class Detector:
         if self._window_bounds is None:
             return None
 
+        settings = self._config.load_settings()
         wb = self._window_bounds
         scale = self._scale_factor
+
+        inset_left = wb.width * settings.window_inset_left
+        inset_top = wb.height * settings.window_inset_top
+        eff_x = wb.x + inset_left
+        eff_y = wb.y + inset_top
+        eff_w = max(1, wb.width - inset_left)
+        eff_h = max(1, wb.height - inset_top)
+
+        xs = float(np.clip(roi_bounds.x_start + settings.roi_shift_x, 0.0, 1.0))
+        xe = float(np.clip(roi_bounds.x_end + settings.roi_shift_x, 0.0, 1.0))
+        ys = float(np.clip(roi_bounds.y_start + settings.roi_shift_y, 0.0, 1.0))
+        ye = float(np.clip(roi_bounds.y_end + settings.roi_shift_y, 0.0, 1.0))
+        if xe <= xs:
+            xe = min(1.0, xs + 0.01)
+        if ye <= ys:
+            ye = min(1.0, ys + 0.01)
+
         return {
-            "left": int((wb.x + wb.width * roi_bounds.x_start) * scale),
-            "top": int((wb.y + wb.height * roi_bounds.y_start) * scale),
-            "width": int(wb.width * (roi_bounds.x_end - roi_bounds.x_start) * scale),
-            "height": int(wb.height * (roi_bounds.y_end - roi_bounds.y_start) * scale),
+            "left": int((eff_x + eff_w * xs) * scale),
+            "top": int((eff_y + eff_h * ys) * scale),
+            "width": max(1, int(eff_w * (xe - xs) * scale)),
+            "height": max(1, int(eff_h * (ye - ys) * scale)),
         }
 
     def capture_roi(self, roi_bounds) -> Optional[np.ndarray]:
@@ -330,7 +349,42 @@ class Detector:
             return (float(np.clip(left, 0.0, 1.0)),
                     float(np.clip(right, 0.0, 1.0)))
 
+        gradient_bounds = self._gradient_bar_bounds(frame)
+        if gradient_bounds is not None:
+            return gradient_bounds
+
         return self._brightness_fallback(frame)
+
+    def _gradient_bar_bounds(self, frame: np.ndarray) -> Optional[Tuple[float, float]]:
+        """Column-gradient peak finder (digmacro-style fallback when colour masks fail)."""
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY).astype(np.float32)
+        if gray.shape[1] < 12:
+            return None
+
+        grad = np.abs(np.gradient(gray, axis=1))
+        col_strength = np.mean(grad, axis=0)
+        if float(col_strength.max()) < 2.0:
+            return None
+
+        threshold = float(np.mean(col_strength) + np.std(col_strength) * 0.5)
+        active = col_strength >= threshold
+        if not np.any(active):
+            return None
+
+        indices = np.where(active)[0]
+        splits = np.where(np.diff(indices) > 3)[0]
+        starts = np.insert(indices[splits + 1], 0, indices[0])
+        ends = np.append(indices[splits], indices[-1])
+        lengths = ends - starts
+        if len(lengths) == 0:
+            return None
+
+        best = int(np.argmax(lengths))
+        left = starts[best] / frame.shape[1]
+        right = ends[best] / frame.shape[1]
+        if right - left < 0.03:
+            return None
+        return (float(np.clip(left, 0.0, 1.0)), float(np.clip(right, 0.0, 1.0)))
 
     def _brightness_fallback(self, frame: np.ndarray) -> Optional[Tuple[float, float]]:
         """Attempt to locate the control zone via a sliding-window brightness scan."""
@@ -429,93 +483,169 @@ class Detector:
     def detect_progress(self, progress_frame: np.ndarray) -> float:
         """Return progress-bar fill as a float 0.0–1.0.
 
-        Scans columns left-to-right and finds the rightmost column that still
-        contains a significant number of coloured (non-dark) pixels.
+        Uses row-consensus across the ROI so gradient bleed from the control bar
+        does not read as sudden 90%+ completion.
         """
         if progress_frame is None or progress_frame.size == 0:
             return 0.0
 
         hsv = cv2.cvtColor(progress_frame, cv2.COLOR_BGR2HSV)
         h, w = hsv.shape[:2]
+        if w < 8:
+            return 0.0
 
-        # Require both brightness and some saturation
-        v_ok = hsv[:, :, 2] > 50
-        s_ok = hsv[:, :, 1] > 30
-        mask = v_ok & s_ok
+        vfx_keep = self._filter_vfx(hsv) > 0
+        h_ch = hsv[:, :, 0]
+        s_ch = hsv[:, :, 1]
+        v_ch = hsv[:, :, 2]
 
-        # Minimum pixel count per column to be considered "filled"
-        min_pixels = max(1, int(h * 0.15))
+        # Progress fill: bright white/cyan strip (reject saturated red/blue VFX)
+        fill_mask = (
+            (v_ch > 75)
+            & (s_ch > 20)
+            & (s_ch < 200)
+            & vfx_keep
+            & ~((s_ch > 90) & ((h_ch < 25) | (h_ch > 115)))
+        )
+
+        row_need = max(0.18, min(0.40, 8.0 / max(h, 1)))
+        col_ratio = np.mean(fill_mask, axis=0)
+        filled = col_ratio >= row_need
 
         rightmost = -1
-        col_sums = np.sum(mask, axis=0)  # vectorised column counts
-        
-        # We scan from left and only accept contiguous columns.
-        # This prevents success text from being seen as 100% progress.
         for col in range(w):
-            if col_sums[col] >= min_pixels:
+            if filled[col]:
                 rightmost = col
-            elif col > 5 and rightmost < col - 10: 
-                # Large gap found - stop scanning to avoid text ghosting
+            elif col > 4 and rightmost >= 0 and (col - rightmost) > max(8, w // 12):
                 break
 
         if rightmost < 0:
             return 0.0
 
-        progress = (rightmost + 1) / w
-        return float(np.clip(progress, 0.0, 1.0))
+        return float(np.clip((rightmost + 1) / w, 0.0, 1.0))
 
     # ---- shake button --------------------------------------------------
 
-    def detect_shake_button(self, shake_frame: np.ndarray) -> Optional[Tuple[int, int]]:
-        """Detect the SHAKE button and return its centre in screen coordinates.
+    def _shake_button_score(
+        self,
+        v_channel: np.ndarray,
+        s_channel: np.ndarray,
+        cx: int,
+        cy: int,
+        radius: int,
+    ) -> float:
+        """Score how closely a circle matches the Fisch SHAKE UI (dark fill + white ring + text)."""
+        h, w = v_channel.shape[:2]
+        if radius < 14 or radius > int(min(h, w) * 0.14):
+            return 0.0
 
-        Returns ``(screen_x, screen_y)`` or *None* if the button is not
-        visible.
-        """
+        yy, xx = np.ogrid[:h, :w]
+        dist2 = (xx - cx) ** 2 + (yy - cy) ** 2
+        inner = dist2 < (0.42 * radius) ** 2
+        ring = (dist2 >= (0.58 * radius) ** 2) & (dist2 <= (0.98 * radius) ** 2)
+        text_zone = dist2 < (0.38 * radius) ** 2
+
+        if int(inner.sum()) < 25 or int(ring.sum()) < 40:
+            return 0.0
+
+        inner_v = float(v_channel[inner].mean())
+        ring_v = float(v_channel[ring].mean())
+        ring_sat_frac = float((s_channel[ring] > 85).sum()) / float(ring.sum())
+        text_white_frac = float((v_channel[text_zone] > 175).sum()) / float(text_zone.sum())
+
+        # Reject saturated red/blue water stripes and colored nameplates
+        if ring_sat_frac > 0.22:
+            return 0.0
+        if inner_v > 125 or ring_v < 155:
+            return 0.0
+        if text_white_frac < 0.06:
+            return 0.0
+
+        contrast = (ring_v - inner_v) / 255.0
+        ring_score = min((ring_v - 155) / 70.0, 1.0)
+        dark_score = min((115 - inner_v) / 90.0, 1.0)
+        text_score = min(text_white_frac * 5.0, 1.0)
+        return float(
+            np.clip(
+                contrast * 0.40 + ring_score * 0.30 + dark_score * 0.20 + text_score * 0.10,
+                0.0,
+                1.0,
+            )
+        )
+
+    def detect_shake_button(self, shake_frame: np.ndarray) -> Tuple[Optional[Tuple[int, int]], float]:
+        """Detect the SHAKE button; return screen coords and a confidence score."""
         if shake_frame is None or shake_frame.size == 0:
-            return None
+            return None, 0.0
 
+        h, w = shake_frame.shape[:2]
         hsv = cv2.cvtColor(shake_frame, cv2.COLOR_BGR2HSV)
         v_channel = hsv[:, :, 2]
         s_channel = hsv[:, :, 1]
 
-        mask = ((v_channel > 180) & (s_channel > 50)).astype(np.uint8) * 255
+        # White outline + SHAKE label only (ignore saturated environment colours)
+        white_ui = (v_channel > 185) & (s_channel < 75)
+        white_mask = white_ui.astype(np.uint8) * 255
+        white_mask = cv2.bitwise_and(white_mask, self._filter_vfx(hsv))
 
-        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        if not contours:
-            return None
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+        white_mask = cv2.morphologyEx(white_mask, cv2.MORPH_CLOSE, kernel)
+
+        candidates: list[tuple[float, int, int]] = []
+
+        # Circle search on desaturated bright edges
+        gray = cv2.cvtColor(shake_frame, cv2.COLOR_BGR2GRAY)
+        edges = cv2.Canny(white_mask, 60, 160)
+        min_r = max(16, int(min(h, w) * 0.022))
+        max_r = max(min_r + 10, int(min(h, w) * 0.11))
+        circles = cv2.HoughCircles(
+            edges,
+            cv2.HOUGH_GRADIENT,
+            dp=1.2,
+            minDist=max(50, min(h, w) // 6),
+            param1=90,
+            param2=22,
+            minRadius=min_r,
+            maxRadius=max_r,
+        )
+        if circles is not None:
+            for cx, cy, r in np.round(circles[0]).astype(int):
+                score = self._shake_button_score(v_channel, s_channel, cx, cy, r)
+                if score > 0.0:
+                    candidates.append((score, cx, cy))
+
+        # Fallback: white ring contours with dark interior
+        contours, _ = cv2.findContours(white_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        for c in contours:
+            area = cv2.contourArea(c)
+            if area < 180 or area > h * w * 0.04:
+                continue
+            (cx, cy), r = cv2.minEnclosingCircle(c)
+            score = self._shake_button_score(v_channel, s_channel, int(cx), int(cy), int(r))
+            if score > 0.0:
+                candidates.append((score, int(cx), int(cy)))
+
+        if not candidates:
+            return None, 0.0
 
         settings = self._config.load_settings()
-        shake_roi = settings.shake_roi
-        roi_pixels = self._compute_roi_pixels(shake_roi)
+        roi_pixels = self._compute_roi_pixels(settings.shake_roi)
         if roi_pixels is None:
-            return None
+            return None, 0.0
 
+        best_score, best_cx, best_cy = max(candidates, key=lambda item: item[0])
         scale = self._scale_factor
-
-        for c in sorted(contours, key=cv2.contourArea, reverse=True):
-            area = cv2.contourArea(c)
-            if area < 500 or area > 20000:
-                continue
-
-            x, y, w, h = cv2.boundingRect(c)
-            aspect = w / h if h > 0 else 0
-            if aspect < 0.3 or aspect > 3.0:
-                continue
-
-            M = cv2.moments(c)
-            if M["m00"] == 0:
-                continue
-
-            cx = int(M["m10"] / M["m00"])
-            cy = int(M["m01"] / M["m00"])
-
-            screen_x = int((roi_pixels["left"] + cx) / scale)
-            screen_y = int((roi_pixels["top"] + cy) / scale)
-            self.logger.debug("Shake button found at screen (%d, %d)", screen_x, screen_y)
-            return (screen_x, screen_y)
-
-        return None
+        screen_pos = (
+            int((roi_pixels["left"] + best_cx) / scale),
+            int((roi_pixels["top"] + best_cy) / scale),
+        )
+        self.logger.debug(
+            "Shake candidate at screen (%d, %d) confidence=%.2f",
+            screen_pos[0],
+            screen_pos[1],
+            best_score,
+        )
+        return screen_pos, best_score
 
     # ------------------------------------------------------------------
     # Orchestrator
@@ -535,31 +665,43 @@ class Detector:
 
         shape_active = self.detect_bar_active(bar_frame)
         fish_x = self.detect_fish_x(bar_frame)
-        
-        # Check progress bar visibility as well
+
         progress_frame = self.capture_roi(settings.progress_roi)
         progress = self.detect_progress(progress_frame) if progress_frame is not None else 0.0
-        
-        # A bite is CONFIRMED if we see the bar shape or the fish icon.
-        # This prevents "ghost" reeling from text in the progress bar area.
-        bite_confirmed = shape_active or (fish_x is not None)
-        
-        # A minigame is active if a bite was confirmed OR we still see progress
-        # (to keep reeling if the bar/fish briefly flickers or is covered).
-        active = bite_confirmed or (progress > 0.0)
 
-        if not active:
-            # Check for a shake button instead
+        # Always scan for shake — it must work even when bar/VFX look "active"
+        shake_pos = None
+        shake_confidence = 0.0
+        if settings.shake_enabled:
             shake_frame = self.capture_roi(settings.shake_roi)
-            shake_pos = self.detect_shake_button(shake_frame) if shake_frame is not None else None
-            return DetectionResult(bar_active=False, bite_confirmed=False, shake_pos=shake_pos)
+            if shake_frame is not None:
+                shake_pos, shake_confidence = self.detect_shake_button(shake_frame)
 
-        # --- Bar is active — run full detection ---
-        bar_bounds = self.detect_control_bar(bar_frame)
+        # Require fish + control bar for a real bite (blocks rod VFX / edge false positives)
+        bar_bounds = None
+        if fish_x is not None or shape_active:
+            bar_bounds = self.detect_control_bar(bar_frame)
 
         bar_left = bar_bounds[0] if bar_bounds else None
         bar_right = bar_bounds[1] if bar_bounds else None
-        
+
+        has_minigame_ui = (
+            fish_x is not None and bar_left is not None and bar_right is not None
+        )
+        bite_confirmed = has_minigame_ui or (
+            shape_active and fish_x is not None
+        ) or progress >= 0.12
+
+        active = bite_confirmed or progress >= 0.08
+
+        if not active:
+            return DetectionResult(
+                bar_active=False,
+                bite_confirmed=False,
+                shake_pos=shake_pos,
+                shake_confidence=shake_confidence,
+            )
+
         on_target = False
         if bar_left is not None and bar_right is not None:
             on_target = self.detect_on_target(bar_frame, bar_left, bar_right)
@@ -572,9 +714,11 @@ class Detector:
             bar_right=bar_right,
             on_target=on_target,
             progress=progress,
+            shake_pos=shake_pos,
+            shake_confidence=shake_confidence,
         )
 
-        if self.debug_mode:
+        if self.debug_mode or settings.show_live_vision:
             result.debug_frame = self.get_debug_frame(bar_frame, result)
 
         return result
@@ -583,63 +727,78 @@ class Detector:
     # Debug visualisation
     # ------------------------------------------------------------------
 
-    def get_debug_frame(self, frame: np.ndarray, result: DetectionResult) -> np.ndarray:
-        """Annotate *frame* with detection results for GUI overlay.
+    def get_debug_frame(
+        self,
+        frame: np.ndarray,
+        result: DetectionResult,
+        extras: Optional[dict] = None,
+    ) -> np.ndarray:
+        """Build a clean schematic for the GUI (not a noisy overlay on raw pixels).
 
-        Parameters
-        ----------
-        frame : np.ndarray
-            The raw bar-ROI capture (BGR).
-        result : DetectionResult
-            The detection result for this frame.
-
-        Returns
-        -------
-        np.ndarray
-            A copy of *frame* with visual annotations drawn on top.
+        The bar ROI is only a few pixels tall — drawing fills and text on the
+        capture looks messy when scaled. This renders a fixed-size diagram plus
+        a small dimmed camera inset for calibration checks.
         """
-        vis = frame.copy()
-        h, w = vis.shape[:2]
+        extras = extras or {}
+        schematic_w, schematic_h = 400, 64
+        pad_x, pad_y = 12, 10
+        track_w = schematic_w - pad_x * 2
+        track_h = schematic_h - pad_y * 2
 
-        # Fish indicator — red vertical line
-        if result.fish_x is not None:
-            fx = int(result.fish_x * w)
-            cv2.line(vis, (fx, 0), (fx, h), (0, 0, 255), 2)
-            cv2.putText(
-                vis, f"Fish: {result.fish_x:.2f}",
-                (fx + 4, 15), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 0, 255), 1,
-            )
+        def _x_norm(value: Optional[float]) -> Optional[int]:
+            if value is None:
+                return None
+            return int(pad_x + float(np.clip(value, 0.0, 1.0)) * track_w)
 
-        # Control bar zone — green boundary lines + semi-transparent fill
+        # Dark schematic background
+        vis = np.full((schematic_h, schematic_w, 3), 32, dtype=np.uint8)
+        mid_y = schematic_h // 2
+        cv2.line(vis, (pad_x, mid_y), (schematic_w - pad_x, mid_y), (70, 70, 70), 1)
+
+        # Control bar bracket (outline only — no solid fill)
         if result.bar_left is not None and result.bar_right is not None:
-            lx = int(result.bar_left * w)
-            rx = int(result.bar_right * w)
-            overlay = vis.copy()
-            
-            # Use bright green for on-target, yellow for off-target
-            color = (0, 255, 0) if result.on_target else (0, 255, 255)
-            
-            cv2.rectangle(overlay, (lx, 0), (rx, h), color, -1)
-            cv2.addWeighted(overlay, 0.25, vis, 0.75, 0, vis)
-            cv2.line(vis, (lx, 0), (lx, h), color, 2)
-            cv2.line(vis, (rx, 0), (rx, h), color, 2)
-            
-            status_text = "ON TARGET" if result.on_target else "OFF TARGET"
-            cv2.putText(
-                vis, f"Bar: {result.bar_left:.2f}-{result.bar_right:.2f} ({status_text})",
-                (lx + 4, h - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.4, color, 1,
-            )
+            lx = _x_norm(result.bar_left)
+            rx = _x_norm(result.bar_right)
+            if lx is not None and rx is not None and rx > lx:
+                bar_color = (80, 220, 80) if result.on_target else (80, 220, 220)
+                cv2.rectangle(vis, (lx, pad_y), (rx, schematic_h - pad_y), bar_color, 2)
 
-        # Progress bar — coloured strip at the bottom
-        prog_h = max(4, int(h * 0.08))
-        prog_w = int(result.progress * w)
-        # Gradient green → yellow → red as progress increases
-        r = int(min(255, (1.0 - result.progress) * 2 * 255))
-        g = int(min(255, result.progress * 2 * 255))
-        cv2.rectangle(vis, (0, h - prog_h), (prog_w, h), (0, g, r), -1)
-        cv2.putText(
-            vis, f"Prog: {result.progress:.0%}",
-            (4, h - prog_h - 4), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1,
-        )
+        effective = extras.get("effective_bar")
+        ex = _x_norm(effective) if effective is not None else None
+        if ex is not None:
+            cv2.line(vis, (ex, pad_y), (ex, schematic_h - pad_y), (220, 120, 255), 1)
+
+        predicted = extras.get("predicted_fish_x")
+        px = _x_norm(predicted) if predicted is not None else None
+        if px is not None:
+            for y in range(pad_y, schematic_h - pad_y, 4):
+                cv2.line(vis, (px, y), (px, min(y + 2, schematic_h - pad_y)), (220, 220, 0), 1)
+
+        if result.fish_x is not None:
+            fx = _x_norm(result.fish_x)
+            if fx is not None:
+                cv2.line(vis, (fx, pad_y), (fx, schematic_h - pad_y), (60, 60, 255), 2)
+                cv2.circle(vis, (fx, mid_y), 5, (0, 0, 255), -1)
+
+        # Small dimmed inset of the real ROI (right side) — verify calibration
+        if frame is not None and frame.size > 0:
+            inset_w = 88
+            src_h, src_w = frame.shape[:2]
+            scale = inset_w / max(src_w, 1)
+            inset_h = max(12, min(track_h, int(src_h * scale)))
+            thumb = cv2.resize(frame, (inset_w, inset_h), interpolation=cv2.INTER_AREA)
+            thumb = (thumb * 0.45).astype(np.uint8)
+            x0 = schematic_w - inset_w - 6
+            y0 = (schematic_h - inset_h) // 2
+            y1 = y0 + inset_h
+            if x0 > pad_x + 40 and y1 <= schematic_h:
+                vis[y0:y1, x0 : x0 + inset_w] = thumb
+                cv2.rectangle(
+                    vis,
+                    (x0 - 1, y0 - 1),
+                    (x0 + inset_w, y1),
+                    (90, 90, 90),
+                    1,
+                )
 
         return vis

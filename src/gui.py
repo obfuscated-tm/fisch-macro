@@ -87,8 +87,9 @@ class MacroGUI:
         # Initialize common variables (must be after tk.Tk())
         self.profile_var = tk.StringVar(value=self.settings.active_profile)
         self.root.title("Fisch Macro")
-        self.root.geometry("420x600")
-        self.root.minsize(380, 500)
+        self.root.geometry("440x780")
+        self.root.minsize(400, 640)
+        self._vision_photo = None
         self.root.configure(bg=COLORS["bg"])
         self.root.attributes("-topmost", True)
 
@@ -125,7 +126,9 @@ class MacroGUI:
 
         # Periodic UI update
         self._update_interval = 500  # ms
+        self._vision_interval = 80  # ms
         self._schedule_update()
+        self._schedule_vision_update()
 
         # Handle window close
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
@@ -139,6 +142,27 @@ class MacroGUI:
             self.auto_recast_var,
             self.shake_enabled_var,
             self.profile_var,
+            self.fish_prediction_ms_var,
+            self.prediction_weight_var,
+            self.fish_velocity_smoothing_var,
+            self.bar_velocity_smoothing_var,
+            self.bar_momentum_factor_var,
+            self.control_kp_var,
+            self.control_kd_var,
+            self.reeling_guard_var,
+            self.min_catch_seconds_var,
+            self.fast_catch_min_seconds_var,
+            self.post_catch_lockout_var,
+            self.min_midgame_progress_var,
+            self.finish_progress_threshold_var,
+            self.roi_shift_x_var,
+            self.roi_shift_y_var,
+            self.window_inset_top_var,
+            self.window_inset_left_var,
+            self.prediction_use_accel_var,
+            self.prediction_arrival_lead_var,
+            self.show_live_vision_var,
+            self.off_target_chase_var,
         ]:
             var.trace_add("write", lambda *args: self._save_settings())
 
@@ -354,6 +378,49 @@ class MacroGUI:
         )
         self.on_target_label.pack(anchor=tk.W)
 
+        # ── Live vision (digmacro-style preview) ──
+        vision_card = ttk.Frame(tab, style="Card.TFrame")
+        vision_card.pack(fill=tk.X, padx=8, pady=(4, 4))
+
+        vision_inner = ttk.Frame(vision_card, style="Card.TFrame")
+        vision_inner.pack(fill=tk.X, padx=12, pady=10)
+
+        ttk.Label(
+            vision_inner,
+            text="👁 Live Vision",
+            style="Card.TLabel",
+            font=("Helvetica Neue", 12, "bold"),
+        ).pack(anchor=tk.W)
+
+        ttk.Label(
+            vision_inner,
+            text="Diagram: red dot = fish · dashed yellow = predicted · box = bar · purple = momentum",
+            style="CardDim.TLabel",
+            font=("Helvetica Neue", 9),
+        ).pack(anchor=tk.W, pady=(0, 6))
+
+        self.vision_image_label = tk.Label(
+            vision_inner,
+            text="Start macro to see detection…",
+            bg="#0a0a14",
+            fg=COLORS["text"],
+            font=("Menlo", 10),
+            height=4,
+        )
+        self.vision_image_label.pack(fill=tk.X)
+
+        self.vision_telemetry = tk.Text(
+            vision_inner,
+            height=6,
+            bg="#0a0a14",
+            fg="#a8d4ff",
+            font=("Menlo", 9),
+            relief=tk.FLAT,
+            wrap=tk.WORD,
+        )
+        self.vision_telemetry.pack(fill=tk.X, pady=(6, 0))
+        self.vision_telemetry.config(state=tk.DISABLED)
+
         # ── Start/Stop Button ──
         self.start_button = tk.Button(
             tab,
@@ -503,6 +570,98 @@ class MacroGUI:
 
         self.shake_enabled_var = tk.BooleanVar(value=self.settings.shake_enabled)
         self._add_toggle(content, "Auto Shake", self.shake_enabled_var)
+
+        # ── Reeling / Prediction ──
+        self._add_section_header(content, "Reeling & Prediction")
+
+        self.fish_prediction_ms_var = tk.DoubleVar(value=self.settings.fish_prediction_ms)
+        self._add_slider(content, "Fish Lookahead", self.fish_prediction_ms_var, 0, 200, 10, suffix="ms")
+
+        self.prediction_weight_var = tk.DoubleVar(value=self.settings.prediction_weight)
+        self._add_slider(content, "Prediction Blend", self.prediction_weight_var, 0.0, 1.0, 0.05)
+
+        self.fish_velocity_smoothing_var = tk.DoubleVar(value=self.settings.fish_velocity_smoothing)
+        self._add_slider(content, "Fish Momentum", self.fish_velocity_smoothing_var, 0.10, 0.90, 0.05)
+
+        self.bar_velocity_smoothing_var = tk.DoubleVar(value=self.settings.bar_velocity_smoothing)
+        self._add_slider(content, "Bar Drift Smoothing", self.bar_velocity_smoothing_var, 0.10, 0.90, 0.05)
+
+        self.bar_momentum_factor_var = tk.DoubleVar(value=self.settings.bar_momentum_factor)
+        self._add_slider(content, "Bar Momentum", self.bar_momentum_factor_var, 0.0, 1.0, 0.05)
+
+        self.control_kp_var = tk.DoubleVar(value=self.settings.control_kp)
+        self._add_slider(content, "Control Strength (Kp)", self.control_kp_var, 0.10, 0.60, 0.02)
+
+        self.control_kd_var = tk.DoubleVar(value=self.settings.control_kd)
+        self._add_slider(content, "Response (Kd)", self.control_kd_var, 0.50, 3.00, 0.10)
+
+        # ── Catch Detection ──
+        self._add_section_header(content, "Catch Detection")
+
+        self.reeling_guard_var = tk.DoubleVar(value=self.settings.reeling_guard_seconds)
+        self._add_slider(content, "Reel Start Guard", self.reeling_guard_var, 1.0, 5.0, 0.25, suffix="s")
+
+        self.min_catch_seconds_var = tk.DoubleVar(value=self.settings.min_catch_seconds)
+        self._add_slider(content, "Min Catch Time", self.min_catch_seconds_var, 1.0, 10.0, 0.5, suffix="s")
+
+        self.fast_catch_min_seconds_var = tk.DoubleVar(
+            value=getattr(self.settings, "fast_catch_min_seconds", 1.0)
+        )
+        self._add_slider(
+            content,
+            "Fast Rod Min Reel",
+            self.fast_catch_min_seconds_var,
+            0.5,
+            4.0,
+            0.25,
+            suffix="s",
+        )
+
+        self.post_catch_lockout_var = tk.DoubleVar(
+            value=getattr(self.settings, "post_catch_lockout_seconds", 1.5)
+        )
+        self._add_slider(
+            content,
+            "Post-Catch Lockout",
+            self.post_catch_lockout_var,
+            0.5,
+            5.0,
+            0.25,
+            suffix="s",
+        )
+
+        self.min_midgame_progress_var = tk.DoubleVar(value=self.settings.min_midgame_progress)
+        self._add_slider(content, "Min Progress Before Catch", self.min_midgame_progress_var, 0.20, 0.60, 0.05)
+
+        self.finish_progress_threshold_var = tk.DoubleVar(value=self.settings.finish_progress_threshold)
+        self._add_slider(content, "Finish Progress", self.finish_progress_threshold_var, 0.90, 0.99, 0.01)
+
+        # ── Calibration alignment ──
+        self._add_section_header(content, "Calibration Alignment")
+
+        self.roi_shift_x_var = tk.DoubleVar(value=self.settings.roi_shift_x)
+        self._add_slider(content, "ROI Shift X", self.roi_shift_x_var, -0.08, 0.08, 0.005)
+
+        self.roi_shift_y_var = tk.DoubleVar(value=self.settings.roi_shift_y)
+        self._add_slider(content, "ROI Shift Y", self.roi_shift_y_var, -0.08, 0.08, 0.005)
+
+        self.window_inset_top_var = tk.DoubleVar(value=self.settings.window_inset_top)
+        self._add_slider(content, "Window Inset Top", self.window_inset_top_var, 0.0, 0.08, 0.005)
+
+        self.window_inset_left_var = tk.DoubleVar(value=self.settings.window_inset_left)
+        self._add_slider(content, "Window Inset Left", self.window_inset_left_var, 0.0, 0.08, 0.005)
+
+        self.prediction_use_accel_var = tk.BooleanVar(value=self.settings.prediction_use_acceleration)
+        self._add_toggle(content, "Use Acceleration Predict", self.prediction_use_accel_var)
+
+        self.prediction_arrival_lead_var = tk.BooleanVar(value=self.settings.prediction_arrival_lead)
+        self._add_toggle(content, "Arrival Lead (digmacro-style)", self.prediction_arrival_lead_var)
+
+        self.show_live_vision_var = tk.BooleanVar(value=self.settings.show_live_vision)
+        self._add_toggle(content, "Live Vision Preview", self.show_live_vision_var)
+
+        self.off_target_chase_var = tk.DoubleVar(value=self.settings.off_target_chase_gain)
+        self._add_slider(content, "Off-Target Chase Gain", self.off_target_chase_var, 1.0, 2.0, 0.05)
 
         # ── Hotkey Section ──
         self._add_section_header(content, "Hotkey")
@@ -780,6 +939,27 @@ class MacroGUI:
             self.settings.auto_recast = self.auto_recast_var.get()
             self.settings.shake_enabled = self.shake_enabled_var.get()
             self.settings.active_profile = self.profile_var.get()
+            self.settings.fish_prediction_ms = self.fish_prediction_ms_var.get()
+            self.settings.prediction_weight = self.prediction_weight_var.get()
+            self.settings.fish_velocity_smoothing = self.fish_velocity_smoothing_var.get()
+            self.settings.bar_velocity_smoothing = self.bar_velocity_smoothing_var.get()
+            self.settings.bar_momentum_factor = self.bar_momentum_factor_var.get()
+            self.settings.control_kp = self.control_kp_var.get()
+            self.settings.control_kd = self.control_kd_var.get()
+            self.settings.reeling_guard_seconds = self.reeling_guard_var.get()
+            self.settings.min_catch_seconds = self.min_catch_seconds_var.get()
+            self.settings.fast_catch_min_seconds = self.fast_catch_min_seconds_var.get()
+            self.settings.post_catch_lockout_seconds = self.post_catch_lockout_var.get()
+            self.settings.min_midgame_progress = self.min_midgame_progress_var.get()
+            self.settings.finish_progress_threshold = self.finish_progress_threshold_var.get()
+            self.settings.roi_shift_x = self.roi_shift_x_var.get()
+            self.settings.roi_shift_y = self.roi_shift_y_var.get()
+            self.settings.window_inset_top = self.window_inset_top_var.get()
+            self.settings.window_inset_left = self.window_inset_left_var.get()
+            self.settings.prediction_use_acceleration = self.prediction_use_accel_var.get()
+            self.settings.prediction_arrival_lead = self.prediction_arrival_lead_var.get()
+            self.settings.show_live_vision = self.show_live_vision_var.get()
+            self.settings.off_target_chase_gain = self.off_target_chase_var.get()
 
             self.config.save_settings(self.settings)
         except Exception as e:
@@ -910,6 +1090,22 @@ class MacroGUI:
 
             scale = self.window_tracker.get_scale_factor()
             self.engine.detector.set_window_info(bounds, scale)
+
+            from src.calibrator import Calibrator
+
+            calibrator = Calibrator(self.engine.detector, self.config)
+            background = calibrator.capture_stable_screenshot(
+                wait_seconds=0.12,
+                max_attempts=5,
+            )
+            if background is None:
+                messagebox.showwarning(
+                    "Screenshot Not Ready",
+                    "Could not grab a clean screen image (black bars from fullscreen "
+                    "animation).\n\nWait for the desktop to settle, then try again.",
+                )
+                return
+
             self._append_log("Opened interactive calibration")
 
             window = InteractiveCalibrator(
@@ -917,6 +1113,7 @@ class MacroGUI:
                 self.engine,
                 self.config,
                 self.window_tracker,
+                background_bgr=background,
             )
             self.root.wait_window(window)
             self.settings = self.config.load_settings()
@@ -1065,6 +1262,45 @@ class MacroGUI:
         self._periodic_update()
         self.root.after(self._update_interval, self._schedule_update)
 
+    def _schedule_vision_update(self):
+        """Refresh live vision overlay at higher FPS while running."""
+        self._refresh_vision_panel()
+        self.root.after(self._vision_interval, self._schedule_vision_update)
+
+    def _refresh_vision_panel(self):
+        """Draw the latest detection frame and telemetry on the Control tab."""
+        if not self.settings.show_live_vision:
+            return
+        try:
+            import cv2
+            from PIL import Image, ImageTk
+
+            snap = self.engine.get_vision_snapshot()
+            if snap.frame_bgr is None:
+                if self.engine.is_running():
+                    self.vision_image_label.config(
+                        image="",
+                        text="Waiting for reel…",
+                    )
+                return
+
+            rgb = cv2.cvtColor(snap.frame_bgr, cv2.COLOR_BGR2RGB)
+            pil = Image.fromarray(rgb)
+            target_w = max(320, self.vision_image_label.winfo_width() or 380)
+            scale = min(1.0, target_w / max(pil.width, 1))
+            target_h = max(64, int(pil.height * scale))
+            if pil.width != target_w or pil.height != target_h:
+                pil = pil.resize((target_w, target_h), Image.Resampling.LANCZOS)
+            self._vision_photo = ImageTk.PhotoImage(pil)
+            self.vision_image_label.config(image=self._vision_photo, text="")
+
+            self.vision_telemetry.config(state=tk.NORMAL)
+            self.vision_telemetry.delete("1.0", tk.END)
+            self.vision_telemetry.insert(tk.END, "\n".join(snap.summary_lines()))
+            self.vision_telemetry.config(state=tk.DISABLED)
+        except Exception as exc:
+            logger.debug("Vision panel refresh failed: %s", exc)
+
     def _periodic_update(self):
         """Periodic tasks: update session time, check window status."""
         # Update session time and target status
@@ -1075,14 +1311,25 @@ class MacroGUI:
             seconds = int(duration % 60)
             self.session_time.config(text=f"{hours:02d}:{minutes:02d}:{seconds:02d}")
             
-            # Show "On Target" status if reeling
+            hint = getattr(self.engine, "status_hint", "") or ""
             if self.engine.state.value == "Reeling":
                 if self.engine.last_on_target:
-                    self.on_target_label.config(text="🎯 ON TARGET", foreground=COLORS["accent_green"])
+                    self.on_target_label.config(
+                        text="🎯 ON TARGET", foreground=COLORS["accent_green"]
+                    )
                 else:
-                    self.on_target_label.config(text="⚠️ OFF TARGET", foreground=COLORS["accent_yellow"])
+                    self.on_target_label.config(
+                        text="⚠️ OFF TARGET", foreground=COLORS["accent_yellow"]
+                    )
+            elif hint:
+                self.on_target_label.config(
+                    text=f"📡 {hint[:72]}",
+                    foreground=COLORS["accent_blue"],
+                )
             else:
                 self.on_target_label.config(text="")
+            if hint and self.engine.state.value != "Reeling":
+                self.status_detail.config(text=hint[:120])
         else:
             self.on_target_label.config(text="")
 
@@ -1094,9 +1341,8 @@ class MacroGUI:
                 foreground=COLORS["accent_green"],
             )
             # Update detector with latest bounds
-            if self.engine.is_running():
-                scale = self.window_tracker.get_scale_factor()
-                self.engine.detector.set_window_info(bounds, scale)
+            scale = self.window_tracker.get_scale_factor()
+            self.engine.detector.set_window_info(bounds, scale)
         else:
             self.window_status.config(
                 text="Not found",

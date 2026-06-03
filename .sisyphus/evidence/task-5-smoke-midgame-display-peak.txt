@@ -1,0 +1,1 @@
+PASS: midgame unlock uses display peak, not only trusted peak.

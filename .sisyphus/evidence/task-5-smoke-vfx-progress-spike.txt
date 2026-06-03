@@ -1,0 +1,2 @@
+PASS: implausible progress spike ignored.
+finish_count=0

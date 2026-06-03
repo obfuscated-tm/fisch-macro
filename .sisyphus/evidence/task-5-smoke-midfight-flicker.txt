@@ -1,0 +1,2 @@
+PASS: mid-fight bar flicker does not register catch.
+state=MacroState.REELING

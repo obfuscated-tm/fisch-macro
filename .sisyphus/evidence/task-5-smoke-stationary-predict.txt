@@ -1,0 +1,1 @@
+PASS: stationary / stopped fish avoids over-prediction.

@@ -41,7 +41,7 @@ class WindowTracker:
     def __init__(self):
         self._cached_bounds: Optional[WindowBounds] = None
         self._cache_time: float = 0.0
-        self.cache_ttl: float = 2.0
+        self.cache_ttl: float = 0.4
         self._scale_factor: Optional[float] = None
 
     def get_roblox_bounds(self) -> Optional[WindowBounds]:

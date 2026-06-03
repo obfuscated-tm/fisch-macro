@@ -1,58 +1,58 @@
 {
   "name": "default",
   "fish_hsv_low": [
-    106,
+    122,
     60,
-    156
+    160
   ],
   "fish_hsv_high": [
-    146,
-    143,
+    162,
+    134,
     255
   ],
   "bar_hsv_low": [
-    62,
-    53,
-    201
+    111,
+    30,
+    176
   ],
   "bar_hsv_high": [
-    92,
-    153,
+    161,
+    81,
     255
   ],
   "on_target_hsv_low": [
-    62,
-    53,
-    201
+    111,
+    30,
+    176
   ],
   "on_target_hsv_high": [
-    92,
-    153,
+    161,
+    81,
     255
   ],
   "off_target_hsv_low": [
     0,
-    40,
-    40
+    35,
+    30
   ],
   "off_target_hsv_high": [
-    30,
-    60,
-    103
+    27,
+    175,
+    155
   ],
-  "bar_brightness_threshold": 154,
+  "bar_brightness_threshold": 149,
   "description": "Default profile - works with most standard rods",
   "bar_roi": {
-    "x_start": 0.289021164021164,
-    "x_end": 0.6898148148148148,
-    "y_start": 0.8450226244343891,
+    "x_start": 0.29828042328042326,
+    "x_end": 0.7023809523809523,
+    "y_start": 0.8438914027149321,
     "y_end": 0.8710407239819005
   },
   "progress_roi": {
-    "x_start": 0.3776455026455027,
-    "x_end": 0.6011904761904762,
-    "y_start": 0.8959276018099548,
-    "y_end": 0.9095022624434389
+    "x_start": 0.38955026455026454,
+    "x_end": 0.6084656084656085,
+    "y_start": 0.9004524886877828,
+    "y_end": 0.915158371040724
   },
   "shake_roi": {
     "x_start": 0.006613756613756613,

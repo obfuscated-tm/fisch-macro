@@ -31,6 +31,8 @@ class DetectionResult:
     bar_right: float | None = None
     on_target: bool = False
     progress: float = 0.0
+    shake_pos: tuple[int, int] | None = None
+    shake_confidence: float = 0.0
 
 
 class FakeDetector:
@@ -87,9 +89,11 @@ def make_engine(results: list[DetectionResult]) -> tuple[MacroEngine, FakeContro
     engine.state = MacroState.REELING
     engine._reeling_start_time = time.time()
     engine._last_catch_time = 0.0
-    engine._success_confirm_count = 0
     engine._fail_confirm_count = 0
     engine._bar_gone_confirm_count = 0
+    engine._progress_finish_count = 0
+    engine._progress_finish_low_count = 0
+    engine._peak_progress = 0.0
     engine._last_action_time = 0.0
     engine._last_action_type = None
     engine._last_fish_x = None
@@ -97,12 +101,99 @@ def make_engine(results: list[DetectionResult]) -> tuple[MacroEngine, FakeContro
     engine._fish_velocity = 0.0
     engine._bar_velocity = 0.0
     engine._reel_no_detection_count = 0
+    engine._smoothed_progress = 0.0
+    engine._trusted_peak = 0.0
+    engine._raw_peak_progress = 0.0
+    engine._last_progress_gain_time = time.time()
+    engine._progress_collapse_count = 0
+    engine._reel_stall_count = 0
+    engine._post_catch_armed = True
+    engine._post_catch_clear_count = 0
+    engine._bite_confirm_count = 0
     return engine, controller, settings
 
 
 def write_evidence(name: str, lines: list[str]) -> None:
     EVIDENCE_DIR.mkdir(parents=True, exist_ok=True)
     (EVIDENCE_DIR / name).write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def scenario_synthetic_shake_detected() -> None:
+    """Synthetic dark-circle + white-ring pattern should score as SHAKE."""
+    try:
+        import cv2
+        import numpy as np
+    except ImportError:
+        write_evidence(
+            "task-5-smoke-synthetic-shake.txt",
+            ["SKIP: opencv not installed in smoke environment."],
+        )
+        return
+    from src.config import ConfigManager
+    from src.detector import Detector
+
+    frame = np.zeros((400, 600, 3), dtype=np.uint8)
+    cv2.circle(frame, (320, 200), 52, (230, 230, 230), 4)
+    cv2.circle(frame, (320, 200), 46, (25, 25, 28), -1)
+    cv2.putText(
+        frame, "SHAKE", (285, 210), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (240, 240, 240), 2, cv2.LINE_AA
+    )
+
+    class _Bounds:
+        x = 0
+        y = 0
+        width = 600
+        height = 400
+
+    detector = Detector(ConfigManager(str(ROOT)))
+    detector.set_window_info(_Bounds(), scale_factor=1)
+    pos, confidence = detector.detect_shake_button(frame)
+
+    assert pos is not None, "synthetic SHAKE button should be detected"
+    assert confidence >= 0.42, f"confidence too low: {confidence}"
+    write_evidence(
+        "task-5-smoke-synthetic-shake.txt",
+        [f"PASS: synthetic SHAKE detected at {pos} confidence={confidence:.2f}"],
+    )
+
+
+def scenario_low_confidence_shake_ignored() -> None:
+    """Low-confidence detections must not click random bright UI."""
+    weak = DetectionResult(shake_pos=(200, 200), shake_confidence=0.15)
+    engine, controller, settings = make_engine([weak, weak])
+    engine.state = MacroState.WAITING
+    engine._last_shake_click_time = 0.0
+
+    engine._do_waiting(settings)
+    engine._do_waiting(settings)
+
+    assert controller.actions.count("click") == 0, "low-confidence shake must not click"
+    write_evidence(
+        "task-5-smoke-shake-confidence.txt",
+        ["PASS: low-confidence shake detection ignored.", f"actions={controller.actions}"],
+    )
+
+
+def scenario_intro_vfx_no_instant_catch() -> None:
+    """Rod slash / intro VFX must not register a catch in the first seconds."""
+    vfx = DetectionResult(
+        bar_active=False,
+        bite_confirmed=False,
+        progress=0.99,
+    )
+    engine, controller, settings = make_engine([vfx] * 8)
+    engine._reeling_start_time = time.time()
+    engine._peak_progress = 0.99
+
+    for _ in range(8):
+        engine._do_reeling(settings)
+
+    assert engine.state == MacroState.REELING, "intro VFX should not instantly complete"
+    assert "release" not in controller.actions
+    write_evidence(
+        "task-5-smoke-intro-vfx-no-catch.txt",
+        ["PASS: intro VFX does not register instant catch.", f"actions={controller.actions}"],
+    )
 
 
 def scenario_premature_finish_blocked() -> None:
@@ -176,8 +267,43 @@ def scenario_stable_target_no_thrash() -> None:
     )
 
 
+def scenario_vfx_progress_spike() -> None:
+    """Single-frame VFX progress spike should not count toward finish."""
+    normal = DetectionResult(
+        bar_active=True,
+        bite_confirmed=True,
+        fish_x=0.50,
+        bar_left=0.40,
+        bar_right=0.60,
+        on_target=True,
+        progress=0.50,
+    )
+    spike = DetectionResult(
+        bar_active=True,
+        bite_confirmed=True,
+        fish_x=0.50,
+        bar_left=0.40,
+        bar_right=0.60,
+        on_target=True,
+        progress=0.99,
+    )
+    engine, controller, settings = make_engine([normal, spike, spike, normal, normal])
+    engine._reeling_start_time = time.time() - 5.0
+    engine._saw_midgame_progress = True
+
+    for _ in range(5):
+        engine._do_reeling(settings)
+
+    assert engine.state == MacroState.REELING, "VFX progress spike should not finish the reel"
+    assert engine._progress_finish_count == 0, "implausible spike should not advance finish debounce"
+    write_evidence(
+        "task-5-smoke-vfx-progress-spike.txt",
+        ["PASS: implausible progress spike ignored.", f"finish_count={engine._progress_finish_count}"],
+    )
+
+
 def scenario_vfx_false_finish() -> None:
-    """VFX flash triggers high progress briefly but should not finish the reel."""
+    """Sustained-looking VFX progress briefly but should not finish the reel."""
     # Normal progress
     normal = DetectionResult(
         bar_active=True,
@@ -202,17 +328,104 @@ def scenario_vfx_false_finish() -> None:
     engine, controller, settings = make_engine([
         normal, normal, vfx_flash, normal, normal, normal, normal
     ])
-    engine._reeling_start_time = time.time() - 3.0  # Past guard window
+    engine._reeling_start_time = time.time() - 5.0
+    engine._saw_midgame_progress = True
 
     for _ in range(7):
         engine._do_reeling(settings)
 
-    # Should still be reeling because VFX flash alone shouldn't trigger finish
     assert engine.state == MacroState.REELING, "VFX flash should not trigger premature finish"
     assert "release" not in controller.actions, "no catch completion should fire from VFX flash"
     write_evidence(
         "task-5-smoke-vfx-false-finish.txt",
         ["PASS: VFX false-finish scenario does not trigger premature completion.", f"actions={controller.actions}"],
+    )
+
+
+def scenario_auto_shake_clicks() -> None:
+    """Shake prompts are clicked while waiting, before the minigame starts."""
+    shake = DetectionResult(shake_pos=(400, 300), shake_confidence=0.85)
+    engine, controller, settings = make_engine([shake, shake])
+    engine.state = MacroState.WAITING
+    engine._last_catch_time = 0.0
+    engine._last_shake_click_time = 0.0
+
+    engine._do_waiting(settings)
+    engine._do_waiting(settings)
+
+    assert controller.actions.count("click") >= 1, "shake button should be clicked"
+    assert engine.state == MacroState.WAITING, "shake clicks should not start reeling"
+    write_evidence(
+        "task-5-smoke-auto-shake.txt",
+        ["PASS: auto shake clicks while waiting.", f"actions={controller.actions}"],
+    )
+
+
+def scenario_midfight_bar_flicker_no_catch() -> None:
+    """Brief bar hide mid-fight must not register as caught."""
+    fighting = DetectionResult(
+        bar_active=True,
+        bite_confirmed=True,
+        fish_x=0.50,
+        bar_left=0.40,
+        bar_right=0.60,
+        progress=0.55,
+    )
+    flicker = DetectionResult(
+        bar_active=False,
+        bite_confirmed=False,
+        fish_x=None,
+        progress=0.0,
+    )
+    engine, controller, settings = make_engine([fighting, flicker, flicker, flicker, fighting])
+    engine._reeling_start_time = time.time() - 5.0
+    engine._peak_progress = 0.55
+    engine._saw_midgame_progress = True
+
+    for _ in range(5):
+        engine._do_reeling(settings)
+
+    assert engine.state == MacroState.REELING, "mid-fight flicker should not complete catch"
+    write_evidence(
+        "task-5-smoke-midfight-flicker.txt",
+        ["PASS: mid-fight bar flicker does not register catch.", f"state={engine.state}"],
+    )
+
+
+def scenario_bar_gone_catch_with_peak() -> None:
+    """Bar disappearance after high peak progress should complete the catch."""
+    active = DetectionResult(
+        bar_active=True,
+        bite_confirmed=True,
+        fish_x=0.50,
+        bar_left=0.40,
+        bar_right=0.60,
+        on_target=True,
+        progress=0.93,
+    )
+    gone = DetectionResult(
+        bar_active=False,
+        bite_confirmed=False,
+        fish_x=None,
+        progress=0.0,
+    )
+    settings = Settings()
+    required = max(8, settings.bar_gone_confirm_frames // 2)
+    engine, controller, _ = make_engine([active] + [gone] * required)
+    engine._reeling_start_time = time.time() - 5.0
+    engine._peak_progress = 0.93
+    engine._prev_progress = 0.93
+    engine._saw_midgame_progress = True
+    engine._last_live_minigame_time = time.time() - 1.0
+
+    for _ in range(required + 1):
+        engine._do_reeling(settings)
+
+    assert engine.state == MacroState.COMPLETE, "high peak + bar gone should finish catch"
+    assert "release" in controller.actions
+    write_evidence(
+        "task-5-smoke-bar-gone-catch.txt",
+        ["PASS: bar-gone with high peak progress completes catch.", f"state={engine.state}"],
     )
 
 
@@ -309,20 +522,276 @@ def scenario_bar_velocity_compensation() -> None:
     )
 
 
+def scenario_midgame_unlocks_from_display_peak() -> None:
+    """High raw/smooth progress must unlock catch even when trusted peak lags."""
+    mid = DetectionResult(
+        bar_active=True,
+        bite_confirmed=True,
+        fish_x=0.50,
+        bar_left=0.40,
+        bar_right=0.60,
+        on_target=True,
+        progress=0.56,
+    )
+    engine, controller, settings = make_engine([mid, mid])
+    engine._reeling_start_time = time.time() - 5.0
+    engine._trusted_peak = 0.06
+    engine._smoothed_progress = 0.42
+    engine._raw_peak_progress = 0.56
+    engine._peak_progress = 0.56
+
+    engine._do_reeling(settings)
+
+    assert engine._saw_midgame_progress, "display peak should unlock midgame"
+    assert engine._catch_allowed(settings, 5.0), "catch should be allowed mid-fight"
+    write_evidence(
+        "task-5-smoke-midgame-display-peak.txt",
+        ["PASS: midgame unlock uses display peak, not only trusted peak."],
+    )
+
+
+def scenario_progress_collapse_catch() -> None:
+    """Progress collapse after a real fight should complete the catch."""
+    fighting = DetectionResult(
+        bar_active=True,
+        bite_confirmed=True,
+        fish_x=0.50,
+        bar_left=0.40,
+        bar_right=0.60,
+        progress=0.82,
+    )
+    faded = DetectionResult(
+        bar_active=False,
+        bite_confirmed=False,
+        fish_x=None,
+        progress=0.05,
+    )
+    settings = Settings()
+    required = settings.progress_collapse_confirm_frames
+    engine, controller, _ = make_engine([fighting] + [faded] * required)
+    engine._reeling_start_time = time.time() - 5.0
+    engine._raw_peak_progress = 0.82
+    engine._peak_progress = 0.82
+    engine._saw_midgame_progress = True
+    engine._last_live_minigame_time = time.time() - 1.0
+
+    for _ in range(required + 1):
+        engine._do_reeling(settings)
+
+    assert engine.state == MacroState.COMPLETE, "progress collapse should finish catch"
+    write_evidence(
+        "task-5-smoke-progress-collapse.txt",
+        ["PASS: progress collapse completes catch.", f"state={engine.state}"],
+    )
+
+
+def scenario_post_catch_gate_then_new_bite() -> None:
+    """After a catch, require UI clear before accepting the next bite."""
+    clear = DetectionResult(bar_active=False, bite_confirmed=False, progress=0.0)
+    bite = DetectionResult(
+        bar_active=True,
+        bite_confirmed=True,
+        fish_x=0.50,
+        bar_left=0.40,
+        bar_right=0.60,
+        progress=0.20,
+    )
+    engine, controller, settings = make_engine([clear] * 6 + [bite, bite])
+    engine.state = MacroState.WAITING
+    engine._last_catch_time = time.time() - 10.0
+    engine._reset_post_catch_gate()
+
+    for _ in range(3):
+        engine._do_waiting(settings)
+    assert not engine._post_catch_armed, "should not arm until UI clears"
+
+    for _ in range(settings.post_catch_clear_frames + 1):
+        engine._do_waiting(settings)
+    assert engine._post_catch_armed, "clear frames should arm hunting"
+
+    engine._do_waiting(settings)
+    engine._do_waiting(settings)
+    assert engine.state == MacroState.REELING, "new bite should start reeling"
+    write_evidence(
+        "task-5-smoke-post-catch-gate.txt",
+        ["PASS: post-catch clear gate then new bite starts reeling."],
+    )
+
+
+def scenario_instant_bite_after_cast_release() -> None:
+    """Bite right after cast release should not be blocked by post-catch clear gate."""
+    bite = DetectionResult(
+        bar_active=True,
+        bite_confirmed=True,
+        fish_x=0.50,
+        bar_left=0.42,
+        bar_right=0.58,
+        progress=0.20,
+    )
+    engine, controller, settings = make_engine([bite])
+    engine.state = MacroState.CASTING
+    engine._last_catch_time = time.time() - 10.0
+    engine._reset_post_catch_gate()
+    engine._arm_for_cast_bite(settings)
+
+    assert engine._try_start_reeling(bite, settings, "after cast")
+    assert engine.state == MacroState.REELING
+    write_evidence(
+        "task-5-smoke-instant-cast-bite.txt",
+        ["PASS: instant bite after cast release starts reeling."],
+    )
+
+
+def scenario_bite_confirmed_without_bar_bounds() -> None:
+    """Fish + bite_confirmed should start reeling before bar bounds lock in."""
+    partial = DetectionResult(
+        bar_active=True,
+        bite_confirmed=True,
+        fish_x=0.52,
+        progress=0.15,
+    )
+    engine, controller, settings = make_engine([partial, partial])
+    engine.state = MacroState.WAITING
+    engine._post_catch_armed = True
+    engine._last_catch_time = 0.0
+
+    engine._do_waiting(settings)
+    engine._do_waiting(settings)
+
+    assert engine.state == MacroState.REELING
+    write_evidence(
+        "task-5-smoke-bite-confirmed-start.txt",
+        ["PASS: bite_confirmed path starts reeling without bar bounds."],
+    )
+
+
+def scenario_calibration_rejects_black_slide_frame() -> None:
+    """Fullscreen slide artifacts should score worse than a normal frame."""
+    try:
+        from src.calibrator import Calibrator
+    except ImportError:
+        write_evidence(
+            "task-5-smoke-calibration-artifact.txt",
+            ["SKIP: opencv not installed in test environment."],
+        )
+        return
+
+    good = np.full((200, 400, 3), 120, dtype=np.uint8)
+    bad = good.copy()
+    bad[:, :120] = 0
+
+    good_score = Calibrator.transition_artifact_score(good)
+    bad_score = Calibrator.transition_artifact_score(bad)
+    assert bad_score > good_score + 0.15, (
+        f"black strip should score worse (good={good_score}, bad={bad_score})"
+    )
+    write_evidence(
+        "task-5-smoke-calibration-artifact.txt",
+        ["PASS: calibration artifact scorer rejects black slide frames."],
+    )
+
+
+def scenario_stationary_no_overpredict() -> None:
+    """Still fish should use current position, not lookahead blend."""
+    settings = Settings()
+    engine, _, _ = make_engine([])
+    engine._fish_velocity = 0.0
+
+    for _ in range(12):
+        engine._fish_tracker.add_sample(0.50)
+        time.sleep(0.015)
+
+    predicted = engine._predicted_fish_x(0.50, settings)
+    assert abs(predicted - 0.50) < 0.008, (
+        f"stationary fish should not over-predict, got {predicted}"
+    )
+
+    engine._fish_tracker.reset()
+    for i in range(6):
+        engine._fish_tracker.add_sample(0.30 + i * 0.02)
+        time.sleep(0.02)
+    for _ in range(6):
+        engine._fish_tracker.add_sample(0.46)
+        time.sleep(0.02)
+    engine._fish_velocity = 0.0
+    after_stop = engine._predicted_fish_x(0.46, settings)
+    assert abs(after_stop - 0.46) < 0.02, (
+        f"fish that stopped moving should not keep old momentum, got {after_stop}"
+    )
+    write_evidence(
+        "task-5-smoke-stationary-predict.txt",
+        ["PASS: stationary / stopped fish avoids over-prediction."],
+    )
+
+
+def scenario_left_stall_recovery_holds() -> None:
+    """Off-target bar pinned left should hold to chase fish on the right."""
+    stalled = DetectionResult(
+        bar_active=True,
+        bite_confirmed=True,
+        fish_x=0.35,
+        bar_left=0.05,
+        bar_right=0.22,
+        on_target=False,
+        progress=0.50,
+    )
+    engine, controller, settings = make_engine([stalled, stalled, stalled])
+    engine._reeling_start_time = time.time() - 5.0
+    engine._last_action_time = 0.0
+    engine._last_action_type = "release"
+
+    for _ in range(3):
+        engine._do_reeling(settings)
+
+    assert controller.actions.count("hold") >= 1, "left stall should issue hold to recover"
+    write_evidence(
+        "task-5-smoke-left-stall-recovery.txt",
+        ["PASS: left stall recovery issues hold.", f"actions={controller.actions}"],
+    )
+
+
 def main() -> int:
+    scenario_intro_vfx_no_instant_catch()
     scenario_premature_finish_blocked()
     scenario_flicker_hysteresis()
     scenario_stable_target_no_thrash()
+    scenario_synthetic_shake_detected()
+    scenario_auto_shake_clicks()
+    scenario_low_confidence_shake_ignored()
+    scenario_vfx_progress_spike()
     scenario_vfx_false_finish()
+    scenario_midfight_bar_flicker_no_catch()
+    scenario_bar_gone_catch_with_peak()
+    scenario_midgame_unlocks_from_display_peak()
+    scenario_progress_collapse_catch()
+    scenario_post_catch_gate_then_new_bite()
+    scenario_instant_bite_after_cast_release()
+    scenario_bite_confirmed_without_bar_bounds()
+    scenario_calibration_rejects_black_slide_frame()
+    scenario_stationary_no_overpredict()
+    scenario_left_stall_recovery_holds()
     scenario_bar_velocity_compensation()
     write_evidence(
         "task-5-smoke-overall.txt",
         [
             "PASS: all smoke scenarios passed.",
+            "- intro VFX no instant catch",
             "- premature finish blocked",
             "- flicker hysteresis held",
             "- stable target did not thrash",
+            "- auto shake clicks while waiting",
+            "- low-confidence shake ignored",
+            "- VFX progress spike ignored",
             "- VFX false-finish blocked",
+            "- mid-fight flicker does not false-catch",
+            "- bar-gone catch with peak progress",
+            "- midgame unlock from display peak",
+            "- progress collapse catch",
+            "- stationary fish no over-predict",
+            "- post-catch gate arms new bite",
+            "- bite_confirmed starts reeling",
+            "- instant bite after cast release",
+            "- left stall recovery hold",
             "- bar velocity compensation working",
         ],
     )
