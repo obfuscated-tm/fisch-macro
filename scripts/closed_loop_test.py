@@ -24,7 +24,15 @@ sys.path.insert(0, str(ROOT / "scripts"))
 
 from reel_controller import ControlParams, ReelController  # noqa: E402
 from reel_vision import ReelVision  # noqa: E402
-from simulate_control import DT, Bar, Fish, BAR_WIDTH, count_oscillations  # noqa: E402
+from fisch_sim import (  # noqa: E402
+    DT, Bar, Fish, FightParams, count_reversals as count_oscillations,
+)
+
+# The rod this renders. 0.40 of the track is the median rod's Control; the
+# clips in tests/clips measure 0.20, 0.44, 0.61 and 0.92, so this sits in the
+# middle of what the game actually produces rather than at either extreme.
+FIGHT = FightParams(bar_width=0.40, resilience=0.64)
+BAR_WIDTH = FIGHT.bar_width
 
 W, H = 820, 30          # track size in pixels
 FRAME_W, FRAME_H = 2000, 1131
@@ -84,7 +92,8 @@ def main() -> int:
 
     totals = []
     for seed in range(6):
-        bar, fish = Bar(), Fish(seed)
+        bar = Bar(width=BAR_WIDTH)
+        fish = Fish(FIGHT.resilience, random.Random(seed))
         vision = ReelVision()
         ctrl = ReelController(ControlParams())
 
@@ -133,8 +142,8 @@ def main() -> int:
             if args.save and seed == 0 and i % 20 == 0:
                 cv2.imwrite(str(out_dir / f"f{i:05d}.png"), frame)
 
-            bar.step(hold)
-            fish.step()
+            bar.step(hold, DT)
+            fish.step(DT)
             if true_on:
                 on += 1
             bar_trace.append(bar.pos)

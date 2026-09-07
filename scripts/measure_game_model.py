@@ -335,12 +335,12 @@ def amplitude_model(all_moves):
         m = (x0 >= lo) & (x0 < hi)
         if m.sum():
             print(f"    {lo:.2f}-{hi:.2f}  n={int(m.sum()):3d}  {np.median(amp[m]):.3f}")
-    print(f"\n  Observed amplitudes run about half the {WIKI_AMPLITUDE[0]}-"
-          f"{WIKI_AMPLITUDE[1]} the wiki quotes, which is what the wiki itself\n"
-          "  predicts: a movement 'can be cut short by the start of another', and\n"
-          "  the reroll interval (2.15r) is shorter than the tween (1.3r-3.5r), so\n"
-          "  most movements are interrupted. The drawn distance is 32-48%; the\n"
-          "  distance the fish actually covers is what a controller has to chase.")
+    print(f"\n  Mean |amplitude| {amp.mean():.3f} against the wiki's "
+          f"{WIKI_AMPLITUDE[0]}-{WIKI_AMPLITUDE[1]}: the wiki figure is the\n"
+          "  *range*, not the step. 'Move between +-40r% of the current location'\n"
+          "  puts the destination uniformly in that interval, so the mean distance\n"
+          "  actually travelled is half the bound -- 0.20 at r=1.0, which is what\n"
+          "  these clips show. Read as a fixed step it would be 0.40 and wrong.")
 
 
 def _fmt(v):
