@@ -680,18 +680,27 @@ class Detector:
         if w < 8:
             return 0.0
 
-        vfx_keep = self._filter_vfx(hsv) > 0
         h_ch = hsv[:, :, 0]
         s_ch = hsv[:, :, 1]
         v_ch = hsv[:, :, 2]
 
-        # Progress fill: bright white/cyan/pink strip (reject saturated red/blue VFX and dark backgrounds)
-        # Increased v_ch threshold to > 140 to firmly exclude dark translucent overlay panels
+        # Progress fill: a bright strip growing from the left. It is defined by
+        # brightness, not by colour.
+        #
+        # It must NOT be gated on a saturation floor, and _filter_vfx must not be
+        # applied to it. Measured across the sample clips the fill sits at
+        # S=3..54 depending on the rod — near-white on four of the seven — while
+        # the floor was s_ch > 15 and _filter_vfx discards exactly (V > 250,
+        # S < 60). A white progress bar failed both tests, so this returned ~0
+        # for the whole fight and every downstream catch/fail/stall heuristic was
+        # reading a signal that was never there.
+        #
+        # What still has to be rejected is the world behind a translucent UI: it
+        # is either dark (excluded by the brightness floor) or strongly
+        # saturated at a hue the bar never takes.
         fill_mask = (
             (v_ch > 140)
-            & (s_ch > 15)
             & (s_ch < 200)
-            & vfx_keep
             & ~((s_ch > 90) & ((h_ch < 25) | (h_ch > 115)))
         )
 

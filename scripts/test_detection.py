@@ -22,14 +22,27 @@ import cv2
 import numpy as np
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
+# Both roots: this script imports modules bare (``reel_vision``), while
+# src/detector.py imports them package-qualified (``src.reel_vision``).
 sys.path.insert(0, str(ROOT / "src"))
+sys.path.insert(0, str(ROOT))
 
+from config import ConfigManager  # noqa: E402
+from detector import Detector  # noqa: E402
 from reel_vision import ReelVision  # noqa: E402
 from track_locator import TrackLocator  # noqa: E402
 from viewport import find_viewport, roi_to_pixels  # noqa: E402
 
 
-BAR_ROI = json.loads((ROOT / "settings.json").read_text())["bar_roi"]
+_SETTINGS = json.loads((ROOT / "settings.json").read_text())
+BAR_ROI = _SETTINGS["bar_roi"]
+PROGRESS_ROI = _SETTINGS["progress_roi"]
+
+# The progress bar is what turns a clip into a measurement of the game's rules:
+# its slope while on-target is the gain rate, and its slope while off-target is
+# the loss rate. Reuse production's reader rather than a second implementation,
+# so what the harness measures is what the macro will act on.
+_PROGRESS_READER = Detector(ConfigManager(str(ROOT)))
 
 
 AUTO = False
@@ -47,6 +60,19 @@ def roi_box(frame):
     """
     vp = find_viewport(frame)
     return roi_to_pixels(vp, BAR_ROI)
+
+
+def progress_box(frame):
+    """Pixel rectangle of the progress bar, from the same calibration."""
+    return roi_to_pixels(find_viewport(frame), PROGRESS_ROI)
+
+
+def read_progress(frame) -> float:
+    px0, py0, px1, py1 = progress_box(frame)
+    crop = frame[py0:py1, px0:px1]
+    if crop.size == 0:
+        return 0.0
+    return _PROGRESS_READER.detect_progress(crop)
 
 
 def search_box(frame, expand: float = 3.0):
@@ -128,21 +154,26 @@ def run_dir(frames_dir: pathlib.Path, out_dir: pathlib.Path, use_settings: bool,
         if frame is None:
             continue
 
+        # Progress is read from its own ROI and is independent of whether the
+        # track was located, so it stays valid across a frame the bar detector
+        # gives up on — which is exactly when the rate model has to carry the
+        # state forward.
+        t = frame_index / fps
+        progress = read_progress(frame)
+
         box = locator.update(frame, search_box(frame)) if AUTO else roi_box(frame)
-        if True:
-            if box is None:
-                rows.append({"frame": path.name, "bar_left": "", "bar_right": "",
-                             "fish_x": "", "on_target": "", "confidence": 0.0,
-                             "notes": "track not located"})
-                continue
+        if box is None:
+            rows.append({"frame": path.name, "t": round(t, 4), "bar_left": "",
+                         "bar_right": "", "fish_x": "", "on_target": "",
+                         "progress": round(progress, 4), "confidence": 0.0,
+                         "notes": "track not located"})
+            continue
 
         x0, y0, x1, y1 = box
         # Frames are sampled at a fixed rate, so game time advances by 1/fps
         # between them. Wall-clock would be milliseconds apart and would
         # make the fish motion gate far tighter than it is in a live run.
-        reading = vision.read(
-            frame[y0:y1, x0:x1], pre_located=True, now=frame_index / fps
-        )
+        reading = vision.read(frame[y0:y1, x0:x1], pre_located=True, now=t)
 
         # Continuity check: between adjacent sampled frames the fish cannot
         # teleport. Big jumps mean the detector latched onto the wrong thing.
@@ -153,10 +184,12 @@ def run_dir(frames_dir: pathlib.Path, out_dir: pathlib.Path, use_settings: bool,
 
         rows.append({
             "frame": path.name,
+            "t": round(t, 4),
             "bar_left": "" if reading.bar_left is None else round(reading.bar_left, 4),
             "bar_right": "" if reading.bar_right is None else round(reading.bar_right, 4),
             "fish_x": "" if reading.fish_x is None else round(reading.fish_x, 4),
             "on_target": int(reading.on_target),
+            "progress": round(progress, 4),
             "confidence": round(reading.confidence, 3),
             "notes": reading.notes,
         })
