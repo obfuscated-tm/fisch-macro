@@ -394,7 +394,7 @@ class MacroGUI:
 
         ttk.Label(
             vision_inner,
-            text="Diagram: red dot = fish · dashed yellow = predicted · box = bar · purple = momentum",
+            text="Vision: Red = fish · Dashed = predicted · Green/Blue = bar",
             style="CardDim.TLabel",
             font=("Helvetica Neue", 9),
         ).pack(anchor=tk.W, pady=(0, 6))
@@ -1288,7 +1288,7 @@ class MacroGUI:
             pil = Image.fromarray(rgb)
             target_w = max(320, self.vision_image_label.winfo_width() or 380)
             scale = min(1.0, target_w / max(pil.width, 1))
-            target_h = max(64, int(pil.height * scale))
+            target_h = max(1, int(pil.height * scale))
             if pil.width != target_w or pil.height != target_h:
                 pil = pil.resize((target_w, target_h), Image.Resampling.LANCZOS)
             self._vision_photo = ImageTk.PhotoImage(pil)

@@ -1,2 +1,2 @@
 PASS: intro VFX does not register instant catch.
-actions=['rapid_click', 'rapid_click', 'rapid_click', 'rapid_click', 'rapid_click', 'rapid_click', 'rapid_click', 'rapid_click']
+actions=['release', 'release', 'release', 'release', 'release', 'release', 'release', 'release']

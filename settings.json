@@ -12,16 +12,16 @@
     "y_end": 0.8710407239819005
   },
   "progress_roi": {
-    "x_start": 0.38955026455026454,
-    "x_end": 0.6084656084656085,
-    "y_start": 0.9004524886877828,
-    "y_end": 0.915158371040724
+    "x_start": 0.39021164021164023,
+    "x_end": 0.6097883597883598,
+    "y_start": 0.9026047565118913,
+    "y_end": 0.9150622876557192
   },
   "shake_roi": {
-    "x_start": 0.006613756613756613,
-    "x_end": 0.9828042328042328,
+    "x_start": 0.001984126984126984,
+    "x_end": 0.9993386243386243,
     "y_start": 0.0,
-    "y_end": 0.9830316742081447
+    "y_end": 0.9886749716874292
   },
   "shake_enabled": false,
   "reeling_guard_seconds": 1.5,
@@ -71,5 +71,13 @@
   "bite_confirm_frames": 2,
   "bite_progress_threshold": 0.08,
   "fast_catch_min_seconds": 1.0,
-  "post_cast_bite_window": 2.5
+  "post_cast_bite_window": 2.5,
+  "auto_locate_track": false,
+  "track_search_top": 0.6,
+  "track_relocate_every": 12,
+  "track_search_expand": 3.0,
+  "control_bar_accel": 1.0,
+  "control_latency_seconds": 0.06,
+  "control_lead_seconds": 0.07,
+  "control_stationary_speed": 0.05
 }

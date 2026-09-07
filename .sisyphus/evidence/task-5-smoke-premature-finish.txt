@@ -1,2 +1,2 @@
 PASS: premature finish is blocked during the reeling guard window.
-actions=['rapid_click', 'rapid_click', 'rapid_click']
+actions=['release', 'hold', 'release']

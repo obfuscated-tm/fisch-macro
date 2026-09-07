@@ -180,13 +180,13 @@ class Controller:
         self._killed.set()
         self._running.clear()
 
-        # Ensure the mouse is released
-        if self._mouse_held:
-            try:
-                pyautogui.mouseUp()
-            except Exception:
-                pass
-            self._mouse_held = False
+        # Ensure the mouse is released. Unconditional: this is the path that
+        # must never leave the button down, so it does not trust tracked state.
+        try:
+            pyautogui.mouseUp()
+        except Exception:
+            pass
+        self._mouse_held = False
 
         # Invoke all registered kill callbacks
         for callback in self._kill_callbacks:
@@ -257,12 +257,16 @@ class Controller:
             self._mouse_held = True
             self.logger.debug("Mouse held down.")
 
-    def mouse_release(self) -> None:
+    def mouse_release(self, force: bool = False) -> None:
         """Release the left mouse button.
 
-        Always attempts to release, regardless of killswitch state,
-        to ensure the mouse is never stuck held.
+        Idempotent: the reel controller reasserts its command every tick, so
+        without this guard a released bar would issue a mouseUp event 50 times
+        a second. Pass ``force=True`` on shutdown paths, where the button must
+        come up even if the tracked state disagrees with reality.
         """
+        if not self._mouse_held and not force:
+            return
         try:
             pyautogui.mouseUp()
         except Exception:

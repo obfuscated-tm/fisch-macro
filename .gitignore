@@ -1,0 +1,10 @@
+__pycache__/
+*.py[cod]
+.DS_Store
+
+# Offline test data: extracted frames and annotated output are large and
+# regenerable from tests/clips via scripts/extract_frames.py.
+tests/frames/
+tests/out/
+# Source recordings are large binaries; keep them locally, not in git history.
+tests/clips/

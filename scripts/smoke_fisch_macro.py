@@ -33,6 +33,10 @@ class DetectionResult:
     progress: float = 0.0
     shake_pos: tuple[int, int] | None = None
     shake_confidence: float = 0.0
+    # Mirrors src.detector.DetectionResult; keep these in step with it.
+    debug_frame: object | None = None
+    reading: object | None = None
+    track_box: tuple[int, int, int, int] | None = None
 
 
 class FakeDetector:
@@ -40,7 +44,7 @@ class FakeDetector:
         self._results = list(results)
         self._fallback = self._results[-1] if self._results else DetectionResult()
 
-    def detect_all(self) -> DetectionResult:
+    def detect_all(self, scan_shake: bool = True) -> DetectionResult:
         if self._results:
             return self._results.pop(0)
         return self._fallback
@@ -189,7 +193,12 @@ def scenario_intro_vfx_no_instant_catch() -> None:
         engine._do_reeling(settings)
 
     assert engine.state == MacroState.REELING, "intro VFX should not instantly complete"
-    assert "release" not in controller.actions
+    # The invariant is that no catch is registered — not that the mouse is
+    # never released. With nothing detectable on the track the controller now
+    # releases deliberately: an unheld bar drifts left and recovers, whereas a
+    # held one accelerates into the right wall and stays there.
+    assert engine.stats.fish_caught == 0, "intro VFX must not register a catch"
+    assert engine.stats.fish_failed == 0, "intro VFX must not register a failure"
     write_evidence(
         "task-5-smoke-intro-vfx-no-catch.txt",
         ["PASS: intro VFX does not register instant catch.", f"actions={controller.actions}"],
@@ -212,7 +221,9 @@ def scenario_premature_finish_blocked() -> None:
         engine._do_reeling(settings)
 
     assert engine.state == MacroState.REELING, "guard should block early success"
-    assert "release" not in controller.actions, "no catch completion should fire early"
+    # A release no longer implies a catch: the controller releases whenever
+    # it cannot see the bar, so completion is asserted on state and stats.
+    assert engine.stats.fish_caught == 0, "no catch completion should fire early"
     write_evidence(
         "task-5-smoke-premature-finish.txt",
         ["PASS: premature finish is blocked during the reeling guard window.", f"actions={controller.actions}"],
@@ -260,10 +271,19 @@ def scenario_stable_target_no_thrash() -> None:
         engine._do_reeling(settings)
 
     assert engine.state == MacroState.REELING, "stable input should keep reeling active"
-    assert set(controller.actions) <= {"rapid_click"}, "stable input should not thrash hold/release"
+    # The old macro answered a centred fish with rapid_click, treating it as a
+    # "hold position" input. It is not one: a click is a brief mouse-down, so it
+    # nudges the bar right every tick. This minigame has no neutral input at
+    # all, so the correct steady state is alternating hold/release, and the
+    # invariant worth protecting is that the bar does not run away — i.e. the
+    # controller never emits an unbroken sequence of holds.
+    assert "rapid_click" not in controller.actions, "clicking is not a hold-position input"
+    assert set(controller.actions) <= {"hold", "release"}, controller.actions
+    assert "release" in controller.actions, "a centred bar must not hold indefinitely"
     write_evidence(
         "task-5-smoke-stable-target.txt",
-        ["PASS: stable target stays in the stable/hover path without hold/release thrash.", f"actions={controller.actions}"],
+        ["PASS: centred fish produces bounded hold/release, never a runaway hold.",
+         f"actions={controller.actions}"],
     )
 
 
@@ -335,7 +355,9 @@ def scenario_vfx_false_finish() -> None:
         engine._do_reeling(settings)
 
     assert engine.state == MacroState.REELING, "VFX flash should not trigger premature finish"
-    assert "release" not in controller.actions, "no catch completion should fire from VFX flash"
+    # A release no longer implies a catch: the controller releases whenever
+    # it cannot see the bar, so completion is asserted on state and stats.
+    assert engine.stats.fish_caught == 0, "no catch should fire from a VFX flash"
     write_evidence(
         "task-5-smoke-vfx-false-finish.txt",
         ["PASS: VFX false-finish scenario does not trigger premature completion.", f"actions={controller.actions}"],
@@ -422,7 +444,12 @@ def scenario_bar_gone_catch_with_peak() -> None:
         engine._do_reeling(settings)
 
     assert engine.state == MacroState.COMPLETE, "high peak + bar gone should finish catch"
-    assert "release" in controller.actions
+    # The loop here keeps calling _do_reeling past completion, which the real
+    # engine never does, so count at least one rather than exactly one. The
+    # point is that it completed as a *catch* and not as a failure — the old
+    # assertion ("release" in actions) could not tell those apart.
+    assert engine.stats.fish_caught >= 1, "bar gone at high peak should count as a catch"
+    assert engine.stats.fish_failed == 0, "bar gone at high peak must not count as a failure"
     write_evidence(
         "task-5-smoke-bar-gone-catch.txt",
         ["PASS: bar-gone with high peak progress completes catch.", f"state={engine.state}"],
@@ -668,6 +695,8 @@ def scenario_bite_confirmed_without_bar_bounds() -> None:
 def scenario_calibration_rejects_black_slide_frame() -> None:
     """Fullscreen slide artifacts should score worse than a normal frame."""
     try:
+        import numpy as np
+
         from src.calibrator import Calibrator
     except ImportError:
         write_evidence(

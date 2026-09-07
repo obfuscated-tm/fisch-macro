@@ -16,6 +16,7 @@ from typing import Callable, Optional, List
 
 from src.movement_tracker import MovementTracker
 from src.vision import VisionSnapshot
+from src.reel_controller import ControlParams, ReelController
 
 logger = logging.getLogger("macro")
 
@@ -134,6 +135,8 @@ class MacroEngine:
         self._saw_midgame_progress = False
         self._prev_progress = 0.0
         self._fish_tracker = MovementTracker()
+        self._reel_controller = ReelController()
+        self._last_good_read_time = 0.0
         self._last_live_minigame_time = 0.0
         self._near_finish_streak = 0
         self._smoothed_progress = 0.0
@@ -339,7 +342,7 @@ class MacroEngine:
             logger.error(f"Macro loop error: {e}", exc_info=True)
             self._emit_log(f"Error: {e}")
         finally:
-            self.controller.mouse_release()
+            self.controller.mouse_release(force=True)
             self._set_state(MacroState.STOPPED)
             reason = self._stop_reason()
             logger.info("Macro loop ended (%s)", reason)
@@ -365,6 +368,27 @@ class MacroEngine:
         self._saw_midgame_progress = False
         self._prev_progress = 0.0
         self._fish_tracker.reset()
+        self._last_good_read_time = 0.0
+
+        # Rebuild the controller from settings each fight so tuning changes
+        # take effect without a restart, and clear the vision's per-fight
+        # memory (bar width prior, track extent) since the rod may have changed.
+        settings = self.config.load_settings()
+        self._reel_controller = ReelController(
+            ControlParams(
+                bar_accel=settings.control_bar_accel,
+                latency_seconds=settings.control_latency_seconds,
+                neutral_duty=settings.control_neutral_duty,
+                duty_kp=settings.control_duty_kp,
+                duty_ki=settings.control_duty_ki,
+                max_brake_distance=settings.control_max_brake_distance,
+                lead_seconds=settings.control_lead_seconds,
+                stationary_speed=settings.control_stationary_speed,
+            )
+        )
+        if hasattr(self.detector, "reset_session"):
+            self.detector.reset_session()
+
         self._last_live_minigame_time = time.time()
         self._near_finish_streak = 0
         self._smoothed_progress = 0.0
@@ -921,13 +945,17 @@ class MacroEngine:
         if self._should_stop():
             return
 
-        result = self.detector.detect_all()
+        # Shake never appears mid-fight, and scanning for it costs more than
+        # the rest of detection put together.
+        result = self.detector.detect_all(scan_shake=False)
         prev_progress = self._prev_progress
 
+        # Liveness, like bar_active, takes either element as proof the minigame
+        # is still on screen. Demanding both made an ordinary fish dropout start
+        # the clock ticking toward "the bar is gone".
         if (
             result.fish_x is not None
-            and result.bar_left is not None
-            and result.bar_right is not None
+            or (result.bar_left is not None and result.bar_right is not None)
         ):
             self._last_live_minigame_time = time.time()
 
@@ -937,9 +965,6 @@ class MacroEngine:
         finish_progress_threshold = settings.finish_progress_threshold
         max_progress_jump = settings.max_progress_jump
         progress_finish_reset_frames = settings.progress_finish_reset_frames
-        action_min_dwell_seconds = settings.action_min_dwell_seconds
-        stable_hysteresis_multiplier = settings.stable_hysteresis_multiplier
-        pd_deadband = settings.pd_deadband
         elapsed = time.time() - self._reeling_start_time
         catch_allowed = False
 
@@ -1081,190 +1106,91 @@ class MacroEngine:
         self.last_on_target = result.on_target
 
         # === Core reeling algorithm ===
+        #
+        # One switching law, applied unconditionally every tick. There is
+        # deliberately no dwell timer, no cooldown and no early return here:
+        # holding the mouse is a latching physical state, so any branch that
+        # declines to act leaves the button *down* and the bar accelerating
+        # right. That asymmetry is what pinned the bar against the wall.
         fish_x = result.fish_x
         bar_left = result.bar_left
         bar_right = result.bar_right
-        on_target = result.on_target
 
         if fish_x is None or bar_left is None or bar_right is None:
-            self.controller.rapid_click(count=1, interval=0.0)
+            # A dropout of a frame or two is common — VFX crossing the track, the
+            # fish overlapping a bar glyph — and the fish cannot have moved far in
+            # that time, so repeating the last command rides it out. Releasing
+            # instead is not neutral: it accelerates the bar left, which turned
+            # every brief dropout into a visible leftward twitch.
+            #
+            # The budget is wall-clock since the last *good* reading, not a count
+            # of consecutive blind frames. Counting consecutively is wrong when
+            # dropouts are interleaved with successes rather than contiguous: the
+            # counter resets on every good frame, so it never reaches its limit
+            # and the button ends up held almost continuously, driving the bar
+            # into the right wall and parking it there.
+            now = time.time()
+            if self._last_good_read_time <= 0.0:
+                self._last_good_read_time = now
+            blind_for = now - self._last_good_read_time
+            budget = max(0.0, settings.blind_coast_seconds)
+
+            if blind_for <= budget and self._last_action_type == "hold":
+                self.controller.mouse_hold()
+            else:
+                self.controller.mouse_release()
+                self._last_action_type = "release"
             return
+
+        self._last_good_read_time = time.time()
 
         bar_center = (bar_left + bar_right) / 2.0
         self._fish_tracker.add_sample(fish_x)
-        self._update_velocities(
-            fish_x,
-            bar_center,
-            settings.fish_velocity_smoothing,
-            settings.bar_velocity_smoothing,
-        )
 
-        target_fish_x = self._predicted_fish_x(fish_x, settings)
-        effective_bar = self._effective_bar_center(bar_center, settings)
+        decision = self._reel_controller.decide(fish_x, bar_center)
 
-        # PD control with prediction + bar momentum + arrival lead
-        error = target_fish_x - effective_bar
-        arrival_bias = self._arrival_lead_bias(fish_x, bar_center, settings)
-        velocity_diff = self._fish_velocity - self._bar_velocity
-        velocity_diff = max(-0.12, min(0.12, velocity_diff))
+        if decision.hold:
+            self.controller.mouse_hold()
+        else:
+            self.controller.mouse_release()
 
-        kp = settings.control_kp
-        kd = settings.control_kd
+        action = decision.reason
+        self._last_action_type = action
+        self._last_action_time = time.time()
 
-        near_right_wall = bar_right > 0.96
-        near_left_wall = bar_left < 0.04
-        if (near_right_wall and self._bar_velocity > 0) or (near_left_wall and self._bar_velocity < 0):
-            kd *= 0.4
-
-        velocity_magnitude = abs(self._bar_velocity) + abs(self._fish_velocity)
-        if velocity_magnitude > 0.35:
-            kp *= 0.6
-            kd *= 0.6
-
-        velocity_compensation = 0.0
-        if abs(self._bar_velocity) > 0.015:
-            velocity_compensation = -self._bar_velocity * settings.control_bar_drift_gain
-
-        pd_score = (kp * error) + (kd * velocity_diff) + velocity_compensation + arrival_bias
-        
-        # PD-score deadband: prevent tiny oscillations from flipping direction
-        
-        fish_outside_left = fish_x < bar_left + 0.02
-        fish_outside_right = fish_x > bar_right - 0.02
-        geom_on_target = self._fish_inside_bar(fish_x, bar_left, bar_right)
+        # Kept for the GUI telemetry and the older exit heuristics below.
+        self._fish_velocity = decision.fish_velocity
+        self._bar_velocity = decision.bar_velocity
+        self._last_fish_x = fish_x
+        self._last_bar_center = bar_center
+        target_fish_x = decision.fish_projected
+        effective_bar = decision.bar_projected
+        error = decision.error
+        pd_score = error
+        on_target = result.on_target
         off_state = not on_target
-        if geom_on_target is False and on_target:
-            off_state = False
-        elif geom_on_target is True and not on_target:
-            off_state = True
 
-        if off_state or fish_outside_left or fish_outside_right:
-            kp *= settings.off_target_chase_gain
-            kd *= settings.off_target_chase_gain
-            pd_deadband = min(pd_deadband, 0.01)
+        if settings.show_live_vision:
+            # detect_all already rendered the overlay from the frame it actually
+            # analysed. Re-capturing settings.bar_roi here would show a stale
+            # hand-calibrated rectangle rather than the auto-located track, so
+            # the preview and the decisions could disagree.
+            vis = result.debug_frame
+            if vis is None and hasattr(self.detector, "capture_roi"):
+                fallback = self.detector.capture_roi(settings.bar_roi)
+                if fallback is not None:
+                    vis = self.detector.get_debug_frame(
+                        fallback,
+                        result,
+                        extras={
+                            "predicted_fish_x": target_fish_x,
+                            "effective_bar": effective_bar,
+                            "progress_smooth": smooth_progress,
+                            "macro_state": self.state.value,
+                        },
+                    )
 
-        deadzone = 0.05 if on_target else 0.0
-        if self._last_action_type == 'rapid_click':
-            hysteresis_deadzone = deadzone * stable_hysteresis_multiplier
-        else:
-            hysteresis_deadzone = deadzone
-
-        now = time.time()
-        action_cooldown = (now - self._last_action_time < action_min_dwell_seconds)
-        action = self._last_action_type or ""
-        bypass_cooldown = self._should_bypass_action_cooldown(
-            bar_left, fish_x, off_state, settings
-        )
-
-        def _apply_action(new_action: str, apply_fn) -> None:
-            nonlocal action
-            blocked = action_cooldown and new_action != self._last_action_type
-            if not blocked or bypass_cooldown:
-                apply_fn()
-                self._last_action_time = time.time()
-                self._last_action_type = new_action
-            action = new_action
-
-        needs_aggressive_chase = fish_outside_left or fish_outside_right
-        if not needs_aggressive_chase and off_state:
-            needs_aggressive_chase = abs(error) > 0.025
-
-        wants_hold = self._chase_wants_hold(
-            fish_x,
-            bar_left,
-            bar_right,
-            bar_center,
-            target_fish_x,
-            off_state,
-            settings,
-        )
-
-        if needs_aggressive_chase:
-            if wants_hold:
-                _apply_action("hold", self.controller.mouse_hold)
-            else:
-                _apply_action("release", self.controller.mouse_release)
-        elif near_right_wall and target_fish_x > bar_center:
-            # At right limit and fish is right - stay pinned
-            action = 'hold'
-            if not (action_cooldown and action != self._last_action_type):
-                self.controller.mouse_hold()
-                self._last_action_time = time.time()
-                self._last_action_type = action
-        elif near_left_wall and target_fish_x < bar_left + 0.03:
-            # At left limit and fish is also on the left — stay pinned
-            _apply_action("release", self.controller.mouse_release)
-        elif off_state and bar_left < settings.left_stall_bar_edge and wants_hold:
-            # Orange/off bar collapsed left — pull bar right toward fish
-            _apply_action("hold", self.controller.mouse_hold)
-        elif target_fish_x > bar_right - 0.01:
-            # Panic: Fish is escaping right
-            action = 'hold'
-            if not (action_cooldown and action != self._last_action_type):
-                self.controller.mouse_hold()
-                self._last_action_time = time.time()
-                self._last_action_type = action
-        elif target_fish_x < bar_left + 0.01:
-            # Panic: Fish is escaping left
-            action = 'release'
-            if not (action_cooldown and action != self._last_action_type):
-                self.controller.mouse_release()
-                self._last_action_time = time.time()
-                self._last_action_type = action
-        elif (
-            on_target
-            and abs(error) < hysteresis_deadzone
-            and abs(self._bar_velocity) < 0.02
-        ):
-            action = 'rapid_click'
-            if not (action_cooldown and action != self._last_action_type):
-                self.controller.rapid_click(count=1, interval=0.0)
-                self._last_action_time = time.time()
-                self._last_action_type = action
-        elif pd_score > pd_deadband:
-            # Need more upward/rightward force
-            action = 'hold'
-            if not (action_cooldown and action != self._last_action_type):
-                if pd_score < 0.15:
-                    self.controller.mouse_hold()
-                    time.sleep(0.01) # Micro-pulse
-                    self.controller.mouse_release()
-                else:
-                    self.controller.mouse_hold()
-                self._last_action_time = time.time()
-                self._last_action_type = action
-        elif pd_score < -pd_deadband:
-            # Need less force / let it fall
-            action = 'release'
-            if not (action_cooldown and action != self._last_action_type):
-                if pd_score > -0.15:
-                    self.controller.mouse_release()
-                    time.sleep(0.01) # Micro-drift
-                else:
-                    self.controller.mouse_release()
-                self._last_action_time = time.time()
-                self._last_action_type = action
-        else:
-            action = 'rapid_click'
-            if not (action_cooldown and action != self._last_action_type):
-                self.controller.rapid_click(count=1, interval=0.0)
-                self._last_action_time = time.time()
-                self._last_action_type = action
-
-        if settings.show_live_vision and hasattr(self.detector, "capture_roi"):
-            bar_frame = self.detector.capture_roi(settings.bar_roi)
-            if bar_frame is not None:
-                vis = self.detector.get_debug_frame(
-                    bar_frame,
-                    result,
-                    extras={
-                        "predicted_fish_x": target_fish_x,
-                        "effective_bar": effective_bar,
-                        "progress_smooth": smooth_progress,
-                        "pd_score": pd_score,
-                        "last_action": action,
-                    },
-                )
+            if vis is not None:
                 self._publish_vision(
                     vis,
                     result,
@@ -1282,9 +1208,15 @@ class MacroEngine:
                         "catch_allowed": catch_allowed,
                         "extras": {
                             "off_state": off_state,
-                            "fish_outside": fish_outside_left or fish_outside_right,
-                            "geom_on_target": geom_on_target,
-                            "color_on_target": on_target,
+                            "fish_outside": not on_target,
+                            "geom_on_target": on_target,
+                            "hold": decision.hold,
+                            "vision_confidence": (
+                                result.reading.confidence if result.reading else 0.0
+                            ),
+                            "fish_inside_bar": (
+                                result.reading.fish_inside_bar if result.reading else False
+                            ),
                         },
                     },
                 )

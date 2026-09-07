@@ -21,6 +21,9 @@ from typing import Optional, Tuple
 import cv2
 import numpy as np
 
+from src.reel_vision import ReelReading, ReelVision
+from src.track_locator import TrackLocator
+
 
 # ---------------------------------------------------------------------------
 # Data structures
@@ -35,11 +38,13 @@ class DetectionResult:
     fish_x: Optional[float] = None       # 0.0–1.0 normalized position in bar
     bar_left: Optional[float] = None     # 0.0–1.0 control bar left edge
     bar_right: Optional[float] = None    # 0.0–1.0 control bar right edge
-    on_target: bool = False              # Whether the bar is currently over the fish (color-based)
+    on_target: bool = False              # Fish is between the bar edges (geometric)
     progress: float = 0.0                # 0.0–1.0 progress bar fill
     shake_pos: Optional[Tuple[int, int]] = None  # (x, y) screen coords of shake button
     shake_confidence: float = 0.0  # 0–1 match quality for the SHAKE UI pattern
     debug_frame: Optional[np.ndarray] = None     # Annotated frame for GUI
+    reading: Optional["ReelReading"] = None      # Raw structure-based read of the track
+    track_box: Optional[Tuple[int, int, int, int]] = None  # Track ROI within the window band
 
 
 # ---------------------------------------------------------------------------
@@ -64,6 +69,22 @@ class Detector:
         self.debug_mode = False
         self.logger = logging.getLogger("detector")
 
+        # Structure-based reel vision. Replaces per-rod HSV matching for the
+        # control bar and the fish; see src/reel_vision.py for why.
+        self._vision = ReelVision()
+        self._track_locator = TrackLocator()
+        self._relocate_countdown = 0
+        self._shake_countdown = 0
+
+    def reset_session(self) -> None:
+        """Forget per-fight vision state. Call when a new minigame starts."""
+        settings = self._config.load_settings()
+        self._vision.p.fish_relative_strength = settings.fish_relative_strength
+        self._vision.p.fish_max_speed = settings.fish_max_speed
+        self._vision.reset()
+        self._track_locator.reset()
+        self._relocate_countdown = 0
+
     # ------------------------------------------------------------------
     # Window / monitor helpers
     # ------------------------------------------------------------------
@@ -79,8 +100,23 @@ class Detector:
         scale_factor : int
             1 for standard displays, 2 for Retina.
         """
+        changed = (
+            self._window_bounds is None
+            or (bounds.x, bounds.y, bounds.width, bounds.height)
+            != (
+                self._window_bounds.x,
+                self._window_bounds.y,
+                self._window_bounds.width,
+                self._window_bounds.height,
+            )
+            or scale_factor != self._scale_factor
+        )
         self._window_bounds = bounds
         self._scale_factor = scale_factor
+        if not changed:
+            # Called every tick; only say something when it actually moves.
+            return
+        self._track_locator.reset()
         self.logger.info(
             "Window info set — origin=(%s, %s)  size=%sx%s  scale=%s",
             bounds.x, bounds.y, bounds.width, bounds.height, scale_factor,
@@ -178,6 +214,148 @@ class Detector:
             return None
 
     # ------------------------------------------------------------------
+    # Structure-based reel reading
+    # ------------------------------------------------------------------
+
+    def capture_window_band(self, settings) -> Optional[np.ndarray]:
+        """Capture the lower band of the window, where the reel UI lives.
+
+        Auto-location needs more context than the calibrated bar ROI provides —
+        it has to see the track's surroundings to find its edges — but grabbing
+        the whole window every tick is wasteful. The lower band is the
+        compromise.
+        """
+        class _Band:
+            x_start = 0.0
+            x_end = 1.0
+            y_start = float(np.clip(settings.track_search_top, 0.0, 0.95))
+            y_end = 1.0
+
+        return self.capture_roi(_Band())
+
+    def read_reel(self, settings) -> Tuple[Optional[ReelReading], Optional[np.ndarray], Optional[Tuple[int, int, int, int]]]:
+        """Read the reel track. Returns (reading, band_frame, track_box).
+
+        ``track_box`` is in the coordinate space of the captured band, not the
+        screen — it is only used for the debug overlay.
+        """
+        if not settings.auto_locate_track:
+            # Default path. The calibrated ROI is used as the track strip
+            # directly, which measured better than searching for the track on
+            # every one of the seven sample clips: 74-100% mid-fight detection,
+            # against an auto-locate path that ranged from 7% to 99% depending
+            # on the biome.
+            #
+            # The reason is that no single appearance cue survives the variety.
+            # A flat black track has no vertical gradient in its interior, so an
+            # edge-based band collapses onto its top border; a track with a
+            # gradient fill does not. A calibrated rectangle sidesteps all of
+            # that, and is stable frame to frame by construction — which matters
+            # more here than being exactly right, since positions are normalised
+            # against this span and a span that moves invents velocity.
+            frame = self.capture_roi(settings.bar_roi)
+            if frame is None:
+                return None, None, None
+            return self._vision.read(frame, pre_located=True), frame, (
+                0, 0, frame.shape[1], frame.shape[0]
+            )
+
+        # Auto-location needs the surroundings, so it pays for the wider grab.
+        # The default path above must not: this capture costs ~9ms of a 20ms
+        # tick and was previously taken on every tick regardless, burning a
+        # third of the detection budget on a frame nothing looked at.
+        band = self.capture_window_band(settings)
+        if band is None:
+            return None, None, None
+
+        # Search box: horizontal span straight from the calibrated ROI, which is
+        # stable by construction; vertical range deliberately generous, because
+        # a hand-dragged rectangle is routinely off by a dozen pixels and the
+        # exact track rows are what the reading depends on.
+        band_h, band_w = band.shape[:2]
+        top = float(np.clip(settings.track_search_top, 0.0, 0.95))
+        denom = max(1e-6, 1.0 - top)
+
+        def _band_y(window_frac: float) -> int:
+            return int(round((window_frac - top) / denom * band_h))
+
+        roi = settings.bar_roi
+        x0 = int(round(roi.x_start * band_w))
+        x1 = int(round(roi.x_end * band_w))
+        centre = (_band_y(roi.y_start) + _band_y(roi.y_end)) / 2.0
+        half = max(24.0, (_band_y(roi.y_end) - _band_y(roi.y_start)) * settings.track_search_expand)
+        search = (
+            max(0, x0),
+            max(0, int(centre - half)),
+            min(band_w, x1),
+            min(band_h, int(centre + half)),
+        )
+
+        box = self._track_locator.box
+        if box is None or self._relocate_countdown <= 0:
+            box = self._track_locator.update(band, search)
+            self._relocate_countdown = max(1, settings.track_relocate_every)
+        else:
+            self._relocate_countdown -= 1
+
+        if box is None:
+            return None, band, None
+
+        bx0, by0, bx1, by1 = box
+        track_frame = band[by0:by1, bx0:bx1]
+        if track_frame.size == 0:
+            return None, band, box
+
+        # The box already is the track, and its horizontal span is fixed by
+        # calibration, so it defines a coordinate frame that is stable tick to
+        # tick rather than being re-derived from each frame.
+        return self._vision.read(track_frame, pre_located=True), band, box
+
+    def capture_pair(self, roi_a, roi_b):
+        """Capture two ROIs in one screen grab where that is cheaper.
+
+        Grab cost here is dominated by per-call overhead rather than by area —
+        a 534k-pixel region measured at 9ms while a 15k-pixel one measured at
+        16ms — so two small grabs cost roughly twice one larger one. The bar and
+        progress ROIs sit a few pixels apart vertically, so their union is
+        barely bigger than either and a single grab serves both.
+
+        Falls back to two separate grabs if the union is disproportionate, which
+        would happen if the ROIs were ever calibrated far apart.
+        """
+        a = self._compute_roi_pixels(roi_a)
+        b = self._compute_roi_pixels(roi_b)
+        if a is None or b is None:
+            return self.capture_roi(roi_a), self.capture_roi(roi_b)
+
+        left = min(a["left"], b["left"])
+        top = min(a["top"], b["top"])
+        right = max(a["left"] + a["width"], b["left"] + b["width"])
+        bottom = max(a["top"] + a["height"], b["top"] + b["height"])
+        union_area = max(1, (right - left) * (bottom - top))
+        parts_area = a["width"] * a["height"] + b["width"] * b["height"]
+
+        if union_area > parts_area * 3:
+            return self.capture_roi(roi_a), self.capture_roi(roi_b)
+
+        try:
+            raw = self._get_mss().grab(
+                {"left": left, "top": top, "width": right - left, "height": bottom - top}
+            )
+            merged = cv2.cvtColor(np.array(raw), cv2.COLOR_BGRA2BGR)
+        except Exception as exc:
+            self.logger.warning("Combined grab failed: %s", exc)
+            return self.capture_roi(roi_a), self.capture_roi(roi_b)
+
+        def _slice(box):
+            y0 = box["top"] - top
+            x0 = box["left"] - left
+            out = merged[y0:y0 + box["height"], x0:x0 + box["width"]]
+            return out if out.size else None
+
+        return _slice(a), _slice(b)
+
+    # ------------------------------------------------------------------
     # VFX filtering
     # ------------------------------------------------------------------
 
@@ -212,12 +390,20 @@ class Detector:
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         
         # Look for the characteristic horizontal lines of the bar track
-        edges = cv2.Canny(gray, 50, 150)
+        # Use stricter thresholds (80, 200) to reject soft edges from transparent backgrounds
+        edges = cv2.Canny(gray, 80, 200)
         row_sums = np.sum(edges > 0, axis=1)
         # The bar track usually has two very long horizontal lines
-        strong_rows = np.sum(row_sums > (frame.shape[1] * 0.5))
+        strong_rows = np.sum(row_sums > (frame.shape[1] * 0.45))
 
-        if strong_rows >= 2:
+        # Check color saturation/value to reject pure dark backgrounds
+        # The actual bar track has some brightness, whereas transparent overlays are darker
+        hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+        v_channel = hsv[:, :, 2]
+        bright_pixels = np.sum(v_channel > 120)
+        has_brightness = bright_pixels > (frame.size // 3) * 0.1  # At least 10% bright pixels
+
+        if strong_rows >= 2 and has_brightness:
             return True
 
         return False
@@ -499,10 +685,11 @@ class Detector:
         s_ch = hsv[:, :, 1]
         v_ch = hsv[:, :, 2]
 
-        # Progress fill: bright white/cyan strip (reject saturated red/blue VFX)
+        # Progress fill: bright white/cyan/pink strip (reject saturated red/blue VFX and dark backgrounds)
+        # Increased v_ch threshold to > 140 to firmly exclude dark translucent overlay panels
         fill_mask = (
-            (v_ch > 75)
-            & (s_ch > 20)
+            (v_ch > 140)
+            & (s_ch > 15)
             & (s_ch < 200)
             & vfx_keep
             & ~((s_ch > 90) & ((h_ch < 25) | (h_ch > 115)))
@@ -651,60 +838,103 @@ class Detector:
     # Orchestrator
     # ------------------------------------------------------------------
 
-    def detect_all(self) -> DetectionResult:
+    def detect_all(self, scan_shake: bool = True) -> DetectionResult:
         """Run the full detection pipeline and return a :class:`DetectionResult`.
 
         This is the main entry-point called each tick by the macro engine.
+
+        ``scan_shake`` exists purely for speed. The shake ROI is most of the
+        window, and grabbing plus Hough-searching it costs more than every other
+        step combined — enough to push a tick past its budget on its own. It is
+        only meaningful while waiting for a bite, so the reeling loop turns it
+        off and gets its ticks back.
+
+        Bar and fish come from the structure-based reader (:mod:`reel_vision`),
+        so they need no per-rod colour calibration, and ``on_target`` is decided
+        geometrically from those bounds rather than by sampling the bar's
+        colour. Progress and shake still use colour, since they are stable
+        single-purpose UI elements.
         """
         settings = self._config.load_settings()
 
-        # --- Capture the bar ROI ---
-        bar_frame = self.capture_roi(settings.bar_roi)
-        if bar_frame is None:
-            return DetectionResult(bar_active=False)
+        if settings.auto_locate_track:
+            reading, band_frame, track_box = self.read_reel(settings)
+            progress_frame = self.capture_roi(settings.progress_roi)
+        else:
+            # One grab for both, rather than one each: see capture_pair.
+            band_frame, progress_frame = self.capture_pair(
+                settings.bar_roi, settings.progress_roi
+            )
+            track_box = None
+            reading = None
+            if band_frame is not None:
+                reading = self._vision.read(band_frame, pre_located=True)
+                track_box = (0, 0, band_frame.shape[1], band_frame.shape[0])
 
-        shape_active = self.detect_bar_active(bar_frame)
-        fish_x = self.detect_fish_x(bar_frame)
-
-        progress_frame = self.capture_roi(settings.progress_roi)
         progress = self.detect_progress(progress_frame) if progress_frame is not None else 0.0
 
         # Always scan for shake — it must work even when bar/VFX look "active"
         shake_pos = None
         shake_confidence = 0.0
-        if settings.shake_enabled:
-            shake_frame = self.capture_roi(settings.shake_roi)
-            if shake_frame is not None:
-                shake_pos, shake_confidence = self.detect_shake_button(shake_frame)
+        if settings.shake_enabled and scan_shake:
+            # Decimated on purpose. The shake ROI is most of the window and the
+            # grab alone was measured at 17-100ms, which by itself pushed a tick
+            # from 32ms to 126ms and dropped the whole loop to roughly 8Hz — slow
+            # enough that bites took seconds to notice. A shake prompt stays up
+            # for seconds, so checking a few times a second loses nothing.
+            if self._shake_countdown <= 0:
+                self._shake_countdown = max(1, settings.shake_scan_every)
+                shake_frame = self.capture_roi(settings.shake_roi)
+                if shake_frame is not None:
+                    shake_pos, shake_confidence = self.detect_shake_button(shake_frame)
+            else:
+                self._shake_countdown -= 1
 
-        # Require fish + control bar for a real bite (blocks rod VFX / edge false positives)
-        bar_bounds = None
-        if fish_x is not None or shape_active:
-            bar_bounds = self.detect_control_bar(bar_frame)
+        if reading is None:
+            return DetectionResult(
+                bar_active=False,
+                bite_confirmed=False,
+                progress=progress,
+                shake_pos=shake_pos,
+                shake_confidence=shake_confidence,
+                track_box=track_box,
+            )
 
-        bar_left = bar_bounds[0] if bar_bounds else None
-        bar_right = bar_bounds[1] if bar_bounds else None
+        fish_x = reading.fish_x
+        bar_left = reading.bar_left
+        bar_right = reading.bar_right
 
-        has_minigame_ui = (
-            fish_x is not None and bar_left is not None and bar_right is not None
+        # Two different questions, deliberately answered with different
+        # strictness.
+        #
+        # "Has a bite started?" must be strict — both a control bar and a fish
+        # — because a false start casts away a fish. That is a structural fact
+        # about the minigame UI, so unlike the old colour heuristics it cannot
+        # be faked by rod VFX or lava.
+        #
+        # "Is the minigame still running?" must be tolerant, because the exit
+        # conditions read it: requiring both here meant a single-frame fish
+        # dropout looked exactly like the bar having vanished, and the fight
+        # could be declared over mid-fight. Either element alone is ample
+        # evidence that the UI is still on screen.
+        has_bar = bar_left is not None and bar_right is not None
+        bite_confirmed = has_bar and fish_x is not None
+        active = (
+            has_bar
+            or fish_x is not None
+            or progress >= settings.bite_progress_threshold
         )
-        bite_confirmed = has_minigame_ui or (
-            shape_active and fish_x is not None
-        ) or progress >= 0.12
-
-        active = bite_confirmed or progress >= 0.08
 
         if not active:
             return DetectionResult(
                 bar_active=False,
                 bite_confirmed=False,
+                progress=progress,
                 shake_pos=shake_pos,
                 shake_confidence=shake_confidence,
+                reading=reading,
+                track_box=track_box,
             )
-
-        on_target = False
-        if bar_left is not None and bar_right is not None:
-            on_target = self.detect_on_target(bar_frame, bar_left, bar_right)
 
         result = DetectionResult(
             bar_active=True,
@@ -712,14 +942,20 @@ class Detector:
             fish_x=fish_x,
             bar_left=bar_left,
             bar_right=bar_right,
-            on_target=on_target,
+            on_target=reading.on_target,
             progress=progress,
             shake_pos=shake_pos,
             shake_confidence=shake_confidence,
+            reading=reading,
+            track_box=track_box,
         )
 
         if self.debug_mode or settings.show_live_vision:
-            result.debug_frame = self.get_debug_frame(bar_frame, result)
+            frame = band_frame
+            if frame is not None and track_box is not None:
+                x0, y0, x1, y1 = track_box
+                frame = frame[y0:y1, x0:x1]
+            result.debug_frame = self.get_debug_frame(frame, result)
 
         return result
 
@@ -733,72 +969,89 @@ class Detector:
         result: DetectionResult,
         extras: Optional[dict] = None,
     ) -> np.ndarray:
-        """Build a clean schematic for the GUI (not a noisy overlay on raw pixels).
-
-        The bar ROI is only a few pixels tall — drawing fills and text on the
-        capture looks messy when scaled. This renders a fixed-size diagram plus
-        a small dimmed camera inset for calibration checks.
-        """
+        """Build an overlaid visualization of the actual captured bar ROI."""
         extras = extras or {}
-        schematic_w, schematic_h = 400, 64
-        pad_x, pad_y = 12, 10
-        track_w = schematic_w - pad_x * 2
-        track_h = schematic_h - pad_y * 2
 
-        def _x_norm(value: Optional[float]) -> Optional[int]:
-            if value is None:
-                return None
-            return int(pad_x + float(np.clip(value, 0.0, 1.0)) * track_w)
+        if frame is None or frame.size == 0:
+            vis = np.full((64, 400, 3), 32, dtype=np.uint8)
+            cv2.putText(vis, "No Input", (150, 36), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (150, 150, 150), 1)
+            return vis
 
-        # Dark schematic background
-        vis = np.full((schematic_h, schematic_w, 3), 32, dtype=np.uint8)
-        mid_y = schematic_h // 2
-        cv2.line(vis, (pad_x, mid_y), (schematic_w - pad_x, mid_y), (70, 70, 70), 1)
+        # Scale up the raw frame for visibility
+        scale_factor = max(1, min(4, 800 // max(1, frame.shape[1])))
+        h, w = frame.shape[:2]
+        vis = cv2.resize(frame, (w * scale_factor, h * scale_factor), interpolation=cv2.INTER_NEAREST)
+        
+        # Dim the image slightly so overlays pop
+        vis = (vis * 0.6).astype(np.uint8)
 
-        # Control bar bracket (outline only — no solid fill)
+        # Add synthetic progress bar underneath
+        prog_h = 12
+        vis = np.pad(vis, ((0, prog_h + 4), (0, 0), (0, 0)), mode='constant', constant_values=20)
+        new_h = vis.shape[0]
+        
+        def _x_px(value: Optional[float]) -> Optional[int]:
+            if value is None: return None
+            return int(float(np.clip(value, 0.0, 1.0)) * (w * scale_factor))
+
+        # Draw Progress bar
+        cv2.rectangle(vis, (0, new_h - prog_h), (w * scale_factor, new_h), (40, 40, 40), -1)
+        if result.progress > 0:
+            px = _x_px(result.progress)
+            cv2.rectangle(vis, (0, new_h - prog_h), (px, new_h), (255, 100, 255), -1)
+            
+            # Smooth progress if provided
+            smooth_prog = extras.get("progress_smooth", 0.0)
+            if smooth_prog > 0:
+                spx = _x_px(smooth_prog)
+                cv2.line(vis, (spx, new_h - prog_h), (spx, new_h), (255, 255, 255), 2)
+
+        # Overlays
+        pad_y = 2
+        track_h = h * scale_factor
+        mid_y = track_h // 2
+
+        # Control bar bracket
         if result.bar_left is not None and result.bar_right is not None:
-            lx = _x_norm(result.bar_left)
-            rx = _x_norm(result.bar_right)
+            lx = _x_px(result.bar_left)
+            rx = _x_px(result.bar_right)
             if lx is not None and rx is not None and rx > lx:
-                bar_color = (80, 220, 80) if result.on_target else (80, 220, 220)
-                cv2.rectangle(vis, (lx, pad_y), (rx, schematic_h - pad_y), bar_color, 2)
+                bar_color = (80, 255, 80) if result.on_target else (80, 220, 255)
+                # Thick bracket
+                cv2.line(vis, (lx, pad_y), (rx, pad_y), bar_color, 3)
+                cv2.line(vis, (lx, track_h - pad_y), (rx, track_h - pad_y), bar_color, 3)
+                cv2.line(vis, (lx, pad_y), (lx, track_h - pad_y), bar_color, 2)
+                cv2.line(vis, (rx, pad_y), (rx, track_h - pad_y), bar_color, 2)
 
+        # Effective bar center
         effective = extras.get("effective_bar")
-        ex = _x_norm(effective) if effective is not None else None
-        if ex is not None:
-            cv2.line(vis, (ex, pad_y), (ex, schematic_h - pad_y), (220, 120, 255), 1)
+        if effective is not None:
+            ex = _x_px(effective)
+            if ex is not None:
+                cv2.line(vis, (ex, pad_y + 4), (ex, track_h - pad_y - 4), (220, 120, 255), 2)
 
+        # Predicted fish
         predicted = extras.get("predicted_fish_x")
-        px = _x_norm(predicted) if predicted is not None else None
-        if px is not None:
-            for y in range(pad_y, schematic_h - pad_y, 4):
-                cv2.line(vis, (px, y), (px, min(y + 2, schematic_h - pad_y)), (220, 220, 0), 1)
+        if predicted is not None:
+            px = _x_px(predicted)
+            if px is not None:
+                # Dashed yellow line
+                for y in range(pad_y, track_h - pad_y, 8):
+                    cv2.line(vis, (px, y), (px, min(y + 4, track_h - pad_y)), (0, 220, 220), 2)
 
+        # Actual fish
         if result.fish_x is not None:
-            fx = _x_norm(result.fish_x)
+            fx = _x_px(result.fish_x)
             if fx is not None:
-                cv2.line(vis, (fx, pad_y), (fx, schematic_h - pad_y), (60, 60, 255), 2)
-                cv2.circle(vis, (fx, mid_y), 5, (0, 0, 255), -1)
+                cv2.line(vis, (fx, pad_y), (fx, track_h - pad_y), (0, 0, 255), 3)
+                cv2.circle(vis, (fx, mid_y), 6, (0, 0, 255), -1)
+                cv2.circle(vis, (fx, mid_y), 3, (255, 255, 255), -1)
 
-        # Small dimmed inset of the real ROI (right side) — verify calibration
-        if frame is not None and frame.size > 0:
-            inset_w = 88
-            src_h, src_w = frame.shape[:2]
-            scale = inset_w / max(src_w, 1)
-            inset_h = max(12, min(track_h, int(src_h * scale)))
-            thumb = cv2.resize(frame, (inset_w, inset_h), interpolation=cv2.INTER_AREA)
-            thumb = (thumb * 0.45).astype(np.uint8)
-            x0 = schematic_w - inset_w - 6
-            y0 = (schematic_h - inset_h) // 2
-            y1 = y0 + inset_h
-            if x0 > pad_x + 40 and y1 <= schematic_h:
-                vis[y0:y1, x0 : x0 + inset_w] = thumb
-                cv2.rectangle(
-                    vis,
-                    (x0 - 1, y0 - 1),
-                    (x0 + inset_w, y1),
-                    (90, 90, 90),
-                    1,
-                )
+        # State text
+        state = extras.get("macro_state")
+        if state:
+            # Add a slight dark background for text readability
+            cv2.rectangle(vis, (4, 4), (160, 28), (0, 0, 0), -1)
+            cv2.putText(vis, state, (8, 22), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
 
         return vis

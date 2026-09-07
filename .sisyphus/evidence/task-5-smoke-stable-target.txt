@@ -1,2 +1,2 @@
-PASS: stable target stays in the stable/hover path without hold/release thrash.
-actions=['rapid_click', 'rapid_click', 'rapid_click', 'rapid_click', 'rapid_click']
+PASS: centred fish produces bounded hold/release, never a runaway hold.
+actions=['release', 'hold', 'release', 'hold', 'release']

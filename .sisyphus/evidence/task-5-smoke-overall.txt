@@ -14,5 +14,6 @@ PASS: all smoke scenarios passed.
 - stationary fish no over-predict
 - post-catch gate arms new bite
 - bite_confirmed starts reeling
+- instant bite after cast release
 - left stall recovery hold
 - bar velocity compensation working
