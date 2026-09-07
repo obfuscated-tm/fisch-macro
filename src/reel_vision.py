@@ -81,16 +81,21 @@ class VisionParams:
     bar_min_width_frac: float = 0.03
     bar_max_width_frac: float = 1.0
 
-    # The width is fixed by the rod, so once it is known a candidate far
-    # narrower than it cannot be the bar — readings at 3% of the ROI are
-    # impossible when no rod produces one under 30% of the track, and a bogus
-    # bar centre feeds the controller phantom velocity.
+    # The width is fixed by the rod, so once it is known a candidate far from it
+    # cannot be the bar — and a bogus bar centre feeds the controller phantom
+    # velocity, which the braking term then squares.
     #
-    # Only the narrow side is rejected. Gating the wide side too was tried and
-    # lost a third of the detections: when the bar reaches either end of the
-    # track the ROI clips it, so a *measured* width well below the established
-    # one is normal near the walls and must not be thrown away.
+    # Both sides are gated, but not symmetrically, because the two errors are
+    # not symmetric. Near a wall the ROI clips the bar, so a *measured* width
+    # below the established one is normal and the narrow gate stays loose.
+    # Nothing clips a bar wider, though: clipping can only remove columns. A
+    # reading wider than the rod's own bar is always the segmentation having
+    # merged the bar with something beside it — an off-target red tint, a slash
+    # effect — and on tests/clips/errors.mov that is exactly what happens a few
+    # seconds into each fight, with widths of 0.53 and 0.69 against a rod whose
+    # bar is 0.20 and readings that pin bar_right to the ROI edge.
     bar_min_width_ratio: float = 0.45
+    bar_max_width_ratio: float = 1.25
     bar_width_samples: int = 12
 
     # --- fish shape prior (fraction of track width) ---
@@ -111,6 +116,18 @@ class VisionParams:
     # the bar, which at a 20ms tick is an order of magnitude larger.
     fish_max_speed: float = 4.0        # track widths per second
     fish_jump_slack: float = 0.03      # tolerance for detection noise
+
+    # The fish cannot leave the middle of the track. Per the wiki's Resilience
+    # page it is confined to 3%-90%, and every movement is clamped into that
+    # band, so a candidate outside it is something else that happens to be
+    # narrow -- on tests/clips/errors.mov the detector reports 0.951 and 0.969
+    # while the bar sits against the right wall, which is the bar's own edge
+    # being read as the fish.
+    #
+    # The bounds are generous because they are expressed against the calibrated
+    # ROI rather than the true track, and the two differ by a couple of percent
+    # at each end; only clearly impossible readings are rejected.
+    fish_track_bounds: Tuple[float, float] = (0.0, 0.94)
     fish_reacquire_frames: int = 6     # give up and re-acquire after this many misses
 
     # The arrow glyphs are not merely narrow — they are *weak*: measured against
@@ -375,6 +392,37 @@ class ReelVision:
                 break
         return [tuple(seg) for seg in result]
 
+    def _extract_bar(self, segments, start_idx: int, end_idx: int, track_w: int):
+        """Recover the bar from a block that merged it with a neighbour.
+
+        The block is a run of consecutive segments, and the bar is a contiguous
+        sub-run of them. Take the sub-run whose width is closest to the width
+        this rod is known to produce, breaking ties toward the bar's last known
+        position, which is where it has to be if it did not teleport.
+        """
+        target = self._established_width * track_w
+        inner = [(a, b) for a, b in segments if a >= start_idx and b <= end_idx]
+        if len(inner) < 2:
+            return None
+
+        best = None
+        best_cost = None
+        for i in range(len(inner)):
+            for j in range(i, len(inner)):
+                a, b = inner[i][0], inner[j][1]
+                width = b - a
+                if width <= 0:
+                    continue
+                cost = abs(width - target) / max(target, 1e-6)
+                if cost > 0.25:
+                    continue
+                if self._last_bar_center is not None:
+                    centre = ((a + b) / 2.0) / track_w
+                    cost += 0.5 * abs(centre - self._last_bar_center)
+                if best_cost is None or cost < best_cost:
+                    best_cost, best = cost, (a, b)
+        return best
+
     def _identify_background(
         self, segments: Sequence[Tuple[int, int]], colours: Sequence[np.ndarray]
     ) -> Optional[int]:
@@ -444,15 +492,37 @@ class ReelVision:
             if not (self.p.bar_min_width_frac <= width_frac <= self.p.bar_max_width_frac):
                 continue
 
-            # Once the rod's bar width is known, anything far narrower is
-            # not the bar. No upper bound: see bar_min_width_ratio.
-            if (
-                self._established_width is not None
-                and width_frac < self._established_width * self.p.bar_min_width_ratio
-            ):
-                continue
+            # Once the rod's bar width is known, anything far from it is not
+            # the bar. See bar_min_width_ratio for why the two sides differ.
+            if self._established_width is not None:
+                if width_frac < self._established_width * self.p.bar_min_width_ratio:
+                    continue
+                if width_frac > self._established_width * self.p.bar_max_width_ratio:
+                    # Too wide means the bar has been merged with whatever sits
+                    # beside it, so the bar is inside this block rather than
+                    # absent. Dropping the frame outright costs ~11% of
+                    # detections on tests/clips/longer.mov; the block's own
+                    # segment boundaries are enough to cut the bar back out,
+                    # since the thing it merged with differs in colour and so
+                    # has a boundary between them.
+                    narrowed = self._extract_bar(segments, start_idx, end_idx, track_w)
+                    if narrowed is None:
+                        continue
+                    start_idx, end_idx = narrowed
+                    width_frac = (end_idx - start_idx) / track_w
 
-            score = width_frac
+            # Before the width is known, prefer the widest block; after, prefer
+            # the one closest to the width this rod actually produces. Scoring
+            # on raw width throughout rewards exactly the merged candidate this
+            # is trying to reject, since a bar fused with its neighbour is by
+            # definition wider than the bar.
+            if self._established_width is None:
+                score = width_frac
+            else:
+                score = 1.0 - min(
+                    1.0, abs(width_frac - self._established_width)
+                    / max(self._established_width, 1e-3)
+                )
             if self._bar_width_prior is not None:
                 deviation = abs(width_frac - self._bar_width_prior) / max(
                     self._bar_width_prior, 1e-3
@@ -530,6 +600,9 @@ class ReelVision:
                 continue
 
             centre = ((seg_start + seg_end) / 2.0) / track_w
+            lo, hi = self.p.fish_track_bounds
+            if not (lo <= centre <= hi):
+                continue
             if gate is not None and not (gate[0] <= centre <= gate[1]):
                 continue
 
@@ -682,13 +755,25 @@ class ReelVision:
         )
         if reading.bar_width is not None:
             self._establish_width(reading.bar_width)
-        if reading.bar_width is not None:
-            if self._bar_width_prior is None:
-                self._bar_width_prior = reading.bar_width
-            else:
-                a = self.p.bar_width_memory
-                self._bar_width_prior = (
-                    self._bar_width_prior * (1.0 - a) + reading.bar_width * a
-                )
+            # Feed the running prior only from readings the established width
+            # vouches for. An unfiltered average is a ratchet: a few merged,
+            # over-wide readings drag the prior up, which makes the next
+            # over-wide reading look reasonable, and the estimate never comes
+            # back. That is the "works for a few seconds, then breaks and stays
+            # broken" failure, and it is why the prior is not simply an EMA over
+            # whatever was seen.
+            trusted = (
+                self._established_width is None
+                or reading.bar_width
+                <= self._established_width * self.p.bar_max_width_ratio
+            )
+            if trusted:
+                if self._bar_width_prior is None:
+                    self._bar_width_prior = reading.bar_width
+                else:
+                    a = self.p.bar_width_memory
+                    self._bar_width_prior = (
+                        self._bar_width_prior * (1.0 - a) + reading.bar_width * a
+                    )
         self._last_bar_center = reading.bar_center
         self._last_fish_x = reading.fish_x

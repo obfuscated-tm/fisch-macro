@@ -67,11 +67,12 @@ def progress_box(frame):
     return roi_to_pixels(find_viewport(frame), PROGRESS_ROI)
 
 
-def read_progress(frame) -> float:
+def read_progress(frame):
+    """Progress fill, or None when there is no progress bar on screen."""
     px0, py0, px1, py1 = progress_box(frame)
     crop = frame[py0:py1, px0:px1]
     if crop.size == 0:
-        return 0.0
+        return None
     return _PROGRESS_READER.detect_progress(crop)
 
 

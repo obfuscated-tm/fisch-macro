@@ -77,6 +77,7 @@ def read_clip(path: pathlib.Path) -> tuple[list[dict], float]:
     vision = ReelVision()
     rows = []
     idx = 0
+    last_progress = 0.0
     while True:
         ok, frame = cap.read()
         if not ok:
@@ -85,13 +86,20 @@ def read_clip(path: pathlib.Path) -> tuple[list[dict], float]:
         box = roi_box(frame)
         x0, y0, x1, y1 = box
         reading = vision.read(frame[y0:y1, x0:x1], pre_located=True, now=t)
+        raw = read_progress(frame)
+        if raw is None:
+            progress = last_progress if reading.bar_left is not None else 0.0
+        else:
+            progress = last_progress = raw
         rows.append({
             "t": t,
             "bar_left": reading.bar_left,
             "bar_right": reading.bar_right,
             "fish_x": reading.fish_x,
             "on_target": bool(reading.on_target),
-            "progress": read_progress(frame),
+            # None where there is no bar to read; held forward while a fight
+            # is on screen, exactly as src/detector.py does in production.
+            "progress": progress,
         })
         idx += 1
     cap.release()

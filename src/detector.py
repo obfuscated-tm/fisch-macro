@@ -61,6 +61,13 @@ class Detector:
         → ColorProfile.
     """
 
+    # Structural test for "is there a progress bar here at all". Measured over
+    # 158 labelled frames of tests/clips/errors.mov: a real bar separates by
+    # ~220 grey levels at a separation-to-spread ratio of ~16, an empty ROI by
+    # ~47 at ~3.
+    PROGRESS_MIN_SEPARATION = 80.0
+    PROGRESS_MIN_SEP_RATIO = 4.0
+
     def __init__(self, config_manager):
         self._config = config_manager
         self._mss = None           # lazy-initialised mss instance
@@ -75,6 +82,7 @@ class Detector:
         self._track_locator = TrackLocator()
         self._relocate_countdown = 0
         self._shake_countdown = 0
+        self._last_progress = 0.0
 
     def reset_session(self) -> None:
         """Forget per-fight vision state. Call when a new minigame starts."""
@@ -84,6 +92,7 @@ class Detector:
         self._vision.reset()
         self._track_locator.reset()
         self._relocate_countdown = 0
+        self._last_progress = 0.0
 
     # ------------------------------------------------------------------
     # Window / monitor helpers
@@ -666,59 +675,67 @@ class Detector:
 
     # ---- progress bar --------------------------------------------------
 
-    def detect_progress(self, progress_frame: np.ndarray) -> float:
-        """Return progress-bar fill as a float 0.0–1.0.
+    def detect_progress(self, progress_frame: np.ndarray) -> Optional[float]:
+        """Progress-bar fill as 0.0-1.0, or None when there is no bar to read.
 
-        Uses row-consensus across the ROI so gradient bleed from the control bar
-        does not read as sudden 90%+ completion.
+        Returning a number unconditionally is what made this dangerous. The ROI
+        is a small strip of screen, and when no minigame is up the game draws
+        the world there instead; on tests/clips/errors.mov that world is bright
+        sand, and a reader that only looks for "where does bright stop" reported
+        99% progress against it. A confident wrong number is worse than no
+        number, because everything downstream believes it.
+
+        So presence is decided first, from structure rather than colour. A real
+        progress bar is two flat regions with one sharp boundary between them --
+        bright fill on the left, dark remainder on the right. Split the column
+        profile at its strongest boundary and the separation across it is ~220
+        grey levels with the two sides internally flat (a separation-to-spread
+        ratio around 16); the same measurement on frames with no minigame gives
+        a separation around 47 and a ratio near 3, and the fill is on the wrong
+        side. The two do not overlap: over 158 labelled frames the test keeps 99
+        of 100 real readings and admits none of 58 empty ones.
+
+        A completely full or completely empty bar has no boundary to find and so
+        reads as absent. That is left to the caller, which knows from the reel
+        track whether a fight is in progress and can hold the last reading
+        rather than inventing one.
         """
         if progress_frame is None or progress_frame.size == 0:
-            return 0.0
+            return None
 
-        hsv = cv2.cvtColor(progress_frame, cv2.COLOR_BGR2HSV)
-        h, w = hsv.shape[:2]
-        if w < 8:
-            return 0.0
+        grey = cv2.cvtColor(progress_frame, cv2.COLOR_BGR2GRAY).astype(np.float64)
+        width = grey.shape[1]
+        if width < 16:
+            return None
 
-        h_ch = hsv[:, :, 0]
-        s_ch = hsv[:, :, 1]
-        v_ch = hsv[:, :, 2]
+        # Median down each column: the fill is uniform vertically, so this
+        # rejects the odd overlaid sprite without blurring the boundary.
+        profile = np.median(grey, axis=0)
 
-        # Progress fill: a bright strip growing from the left. It is defined by
-        # brightness, not by colour.
-        #
-        # It must NOT be gated on a saturation floor, and _filter_vfx must not be
-        # applied to it. Measured across the sample clips the fill sits at
-        # S=3..54 depending on the rod — near-white on four of the seven — while
-        # the floor was s_ch > 15 and _filter_vfx discards exactly (V > 250,
-        # S < 60). A white progress bar failed both tests, so this returned ~0
-        # for the whole fight and every downstream catch/fail/stall heuristic was
-        # reading a signal that was never there.
-        #
-        # What still has to be rejected is the world behind a translucent UI: it
-        # is either dark (excluded by the brightness floor) or strongly
-        # saturated at a hue the bar never takes.
-        fill_mask = (
-            (v_ch > 140)
-            & (s_ch < 200)
-            & ~((s_ch > 90) & ((h_ch < 25) | (h_ch > 115)))
-        )
+        cumulative = np.cumsum(profile)
+        total = cumulative[-1]
+        splits = np.arange(3, width - 3)
+        left_mean = cumulative[splits - 1] / splits
+        right_mean = (total - cumulative[splits - 1]) / (width - splits)
+        separation = np.abs(left_mean - right_mean)
+        best = int(np.argmax(separation))
+        cut = int(splits[best])
+        sep = float(separation[best])
 
-        row_need = max(0.18, min(0.40, 8.0 / max(h, 1)))
-        col_ratio = np.mean(fill_mask, axis=0)
-        filled = col_ratio >= row_need
+        left, right = profile[:cut], profile[cut:]
+        spread = float(np.sqrt(
+            (left.var() * len(left) + right.var() * len(right)) / width
+        ))
+        if sep < self.PROGRESS_MIN_SEPARATION:
+            return None
+        if sep / max(spread, 1e-6) < self.PROGRESS_MIN_SEP_RATIO:
+            return None
+        if left.mean() <= right.mean():
+            # Fill grows from the left. A dark left against a bright right is
+            # the world, not a progress bar.
+            return None
 
-        rightmost = -1
-        for col in range(w):
-            if filled[col]:
-                rightmost = col
-            elif col > 4 and rightmost >= 0 and (col - rightmost) > max(8, w // 12):
-                break
-
-        if rightmost < 0:
-            return 0.0
-
-        return float(np.clip((rightmost + 1) / w, 0.0, 1.0))
+        return float(np.clip(cut / width, 0.0, 1.0))
 
     # ---- shake button --------------------------------------------------
 
@@ -880,7 +897,19 @@ class Detector:
                 reading = self._vision.read(band_frame, pre_located=True)
                 track_box = (0, 0, band_frame.shape[1], band_frame.shape[0])
 
-        progress = self.detect_progress(progress_frame) if progress_frame is not None else 0.0
+        # A missing progress reading means different things depending on
+        # whether a fight is running. Mid-fight the bar is briefly occluded --
+        # by the rod model, by a slash effect, or by being completely full --
+        # and the last known value is the best available answer; a zero there
+        # would look like the progress collapse that ends a fight. With no
+        # minigame on screen there is nothing to hold and zero is correct.
+        raw_progress = self.detect_progress(progress_frame)
+        minigame_up = reading is not None and reading.bar_left is not None
+        if raw_progress is None:
+            progress = self._last_progress if minigame_up else 0.0
+        else:
+            progress = raw_progress
+            self._last_progress = raw_progress
 
         # Always scan for shake — it must work even when bar/VFX look "active"
         shake_pos = None

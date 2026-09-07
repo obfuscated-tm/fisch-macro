@@ -1062,6 +1062,13 @@ class MacroEngine:
             if (
                 elapsed >= settings.min_catch_seconds
                 and self._estimator.verdict() == "lost"
+                # Never let go while progress is still at its high-water mark.
+                # The verdict looks at the last few seconds, so a fight that is
+                # genuinely being won but has just given a little ground can
+                # read as lost for a moment; requiring the fight to have
+                # actually slipped costs nothing on a hopeless one, which is
+                # well below its peak long before this is consulted.
+                and fight.progress < fight.peak_progress - 0.05
             ):
                 self._lost_fight_count += 1
                 if self._lost_fight_count >= settings.lost_fight_confirm_frames:

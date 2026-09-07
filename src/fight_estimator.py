@@ -53,6 +53,14 @@ MIN_STATE_SECONDS = 0.8
 # vote on the rate.
 MIN_RUN_SECONDS = 0.4
 
+# The rates are properties of the fish and hold for the whole fight, so they are
+# measured over all of it. Coverage is not: it is how well the fight is being
+# fought right now, and a fight that went well and then fell apart still
+# averages out fine over its lifetime. tests/clips/errors.mov has exactly that
+# shape -- progress climbs to 45% and then collapses to nothing -- and reads as
+# comfortably winning right up to the end if coverage is taken cumulatively.
+RECENT_WINDOW_SECONDS = 6.0
+
 # A frame-to-frame change beyond what the game can do is not the game. Downward
 # it is a hard bound: nothing reduces progress faster than the loss rate, so a
 # larger drop is the detector losing the bar or the UI changing underneath it.
@@ -76,6 +84,10 @@ class FightState:
     progress: float = 0.0
     peak_progress: float = 0.0
     on_target_fraction: float = 0.0
+    """Coverage over the last few seconds -- how the fight is going now."""
+
+    lifetime_on_target: float = 0.0
+    """Coverage over the whole fight, for reporting rather than for deciding."""
     elapsed: float = 0.0
     boosts: int = 0
     rejected_frames: int = 0
@@ -144,6 +156,8 @@ class FightEstimator:
         self._ticks = 0
         self._flag_agreements = 0
         self._flag_samples = 0
+        self._recent: Deque[Tuple[float, bool]] = deque()
+        self._recent_progress: Deque[Tuple[float, float]] = deque()
         self._run_rising: Optional[bool] = None
         self._run_dp = 0.0
         self._run_dt = 0.0
@@ -182,14 +196,22 @@ class FightEstimator:
         if 0.0 < dt < 1.0 and self._last_progress is not None:
             self._account(progress, dt, on_target)
 
-        st.on_target_fraction = (
-            self._on_ticks / self._ticks if self._ticks else float(bool(on_target))
+        self._trim_recent(now)
+        if self._recent:
+            st.on_target_fraction = sum(r for _, r in self._recent) / len(self._recent)
+        elif self._ticks:
+            st.on_target_fraction = self._on_ticks / self._ticks
+        else:
+            st.on_target_fraction = float(bool(on_target))
+        st.lifetime_on_target = (
+            self._on_ticks / self._ticks if self._ticks else st.on_target_fraction
         )
         st.detector_agreement = (
             self._flag_agreements / self._flag_samples if self._flag_samples else 1.0
         )
         st.progress = progress
         st.peak_progress = max(st.peak_progress, progress)
+        self._recent_progress.append((now, progress))
         if self._first_progress is not None and st.elapsed > 1e-6:
             st.net_rate = (progress - self._first_progress) / st.elapsed
 
@@ -217,11 +239,15 @@ class FightEstimator:
             # and counts toward coverage as whatever the run is already doing.
             if self._run_rising is not None:
                 self._run_dt += dt
+                self._recent.append(
+                    (self._last_t if self._last_t is not None else 0.0, self._run_rising)
+                )
                 self._ticks += 1
                 self._on_ticks += self._run_rising
             return
 
         rising = dp > 0
+        self._recent.append((self._last_t if self._last_t is not None else 0.0, rising))
         self._ticks += 1
         self._on_ticks += rising
         self._flag_samples += 1
@@ -244,6 +270,13 @@ class FightEstimator:
             self._run_rising = rising
             self._run_dp = dp
             self._run_dt = dt
+
+    def _trim_recent(self, now: float) -> None:
+        cutoff = now - RECENT_WINDOW_SECONDS
+        while self._recent and self._recent[0][0] < cutoff:
+            self._recent.popleft()
+        while self._recent_progress and self._recent_progress[0][0] < cutoff:
+            self._recent_progress.popleft()
 
     def _close_run(self) -> None:
         """Bank a finished run of one-sided motion, if it lasted long enough."""
@@ -287,11 +320,26 @@ class FightEstimator:
 
     def _publish(self) -> None:
         st = self.state
-        if self._on_time >= self.min_state_seconds:
-            st.gain_rate = max(0.0, self._on_gain / self._on_time)
+
+        # Include the run still in progress. A clean catch is one unbroken rise
+        # that only ends when the fight does, so waiting for a direction change
+        # to bank it means never measuring the gain rate on exactly the fights
+        # that are going well.
+        on_time, on_gain = self._on_time, self._on_gain
+        off_time, off_loss = self._off_time, self._off_loss
+        if self._run_rising is not None and self._run_dt >= MIN_RUN_SECONDS:
+            if self._run_rising:
+                on_time += self._run_dt
+                on_gain += self._run_dp
+            else:
+                off_time += self._run_dt
+                off_loss += self._run_dp
+
+        if on_time >= self.min_state_seconds:
+            st.gain_rate = max(0.0, on_gain / on_time)
             st.progress_speed = phys.progress_speed_from_gain(st.gain_rate)
-        if self._off_time >= self.min_state_seconds:
-            st.loss_rate = max(0.0, -self._off_loss / self._off_time)
+        if off_time >= self.min_state_seconds:
+            st.loss_rate = max(0.0, -off_loss / off_time)
         elif st.gain_rate is not None:
             # Loss does not scale with Progress Speed -- measured at 0.1186 and
             # 0.1179 in two independent fights while gain varied 0.084-0.178 --
@@ -319,7 +367,10 @@ class FightEstimator:
         # is exactly when the verdict matters. The aggregate answers it without
         # them: progress going down over the whole fight means it is being lost,
         # whatever the component rates turn out to be.
-        if st.net_rate is not None and st.net_rate < 0:
+        recent_net = self._recent_net_rate()
+        if recent_net is not None and recent_net < 0:
+            return "lost"
+        if recent_net is None and st.net_rate is not None and st.net_rate < 0:
             return "lost"
 
         need = st.required_on_target
@@ -331,6 +382,13 @@ class FightEstimator:
         if margin > 0.0:
             return "struggling"
         return "lost"
+
+    def _recent_net_rate(self) -> Optional[float]:
+        """Progress per second across the recent window."""
+        if len(self._recent_progress) < 2:
+            return None
+        (t0, p0), (t1, p1) = self._recent_progress[0], self._recent_progress[-1]
+        return (p1 - p0) / (t1 - t0) if t1 - t0 > 1e-6 else None
 
     def stall_seconds(self, safety: float = 2.5, floor: float = 12.0) -> float:
         """How long to allow before treating a fight as stuck.
