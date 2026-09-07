@@ -32,8 +32,9 @@ offline against recorded frames (see scripts/test_detection.py).
 from __future__ import annotations
 
 import time
+from collections import deque
 from dataclasses import dataclass, field
-from typing import List, Optional, Sequence, Tuple
+from typing import Deque, List, Optional, Sequence, Tuple
 
 import cv2
 import numpy as np
@@ -71,11 +72,26 @@ class VisionParams:
     run_merge_gap: int = 2
 
     # --- control bar shape prior (fraction of track width) ---
-    # The upper bound is generous because bar width scales with the rod: a weak
-    # rod shows a narrow sliver, while a strong one was measured at 67% of the
-    # track. Anything wider than this is the track itself, not the bar.
+    # Bar width is set by the rod's Control stat and does not change during a
+    # fight: per the Fisch wiki, 0 control gives a bar 30% of the track and each
+    # +0.01 adds 1%, up to 100%. Widths seen here are fractions of the
+    # calibrated ROI rather than of the true track, so the bounds stay loose —
+    # an ROI wider than the track scales every measurement down. The real
+    # filtering is done by bar_width_tolerance below.
     bar_min_width_frac: float = 0.03
-    bar_max_width_frac: float = 0.85
+    bar_max_width_frac: float = 1.0
+
+    # The width is fixed by the rod, so once it is known a candidate far
+    # narrower than it cannot be the bar — readings at 3% of the ROI are
+    # impossible when no rod produces one under 30% of the track, and a bogus
+    # bar centre feeds the controller phantom velocity.
+    #
+    # Only the narrow side is rejected. Gating the wide side too was tried and
+    # lost a third of the detections: when the bar reaches either end of the
+    # track the ROI clips it, so a *measured* width well below the established
+    # one is normal near the walls and must not be thrown away.
+    bar_min_width_ratio: float = 0.45
+    bar_width_samples: int = 12
 
     # --- fish shape prior (fraction of track width) ---
     fish_max_width_frac: float = 0.07
@@ -208,6 +224,8 @@ class ReelVision:
 
     def reset(self) -> None:
         self._bg_lab: Optional[np.ndarray] = None
+        self._width_samples: Deque[float] = deque(maxlen=48)
+        self._established_width: Optional[float] = None
         self._last_fish_time: Optional[float] = None
         self._fish_reject_streak: int = 0
         self._fish_strength: Optional[float] = None
@@ -425,6 +443,15 @@ class ReelVision:
             width_frac = (end_idx - start_idx) / track_w
             if not (self.p.bar_min_width_frac <= width_frac <= self.p.bar_max_width_frac):
                 continue
+
+            # Once the rod's bar width is known, anything far narrower is
+            # not the bar. No upper bound: see bar_min_width_ratio.
+            if (
+                self._established_width is not None
+                and width_frac < self._established_width * self.p.bar_min_width_ratio
+            ):
+                continue
+
             score = width_frac
             if self._bar_width_prior is not None:
                 deviation = abs(width_frac - self._bar_width_prior) / max(
@@ -632,10 +659,29 @@ class ReelVision:
             score += 0.15 * max(0.0, 1.0 - deviation / max(self._bar_width_prior, 1e-3))
         return float(np.clip(score, 0.0, 1.0))
 
+    def _establish_width(self, width: float) -> None:
+        """Settle on this rod's bar width from a run of consistent readings.
+
+        The median is used rather than a running average: an average is dragged
+        by the occasional grossly wrong reading, which is exactly what the
+        constraint exists to exclude.
+        """
+        self._width_samples.append(width)
+        if self._established_width is None and len(self._width_samples) >= self.p.bar_width_samples:
+            candidate = float(np.median(self._width_samples))
+            spread = float(np.percentile(self._width_samples, 75) - np.percentile(self._width_samples, 25))
+            # Only commit if the samples actually agree; a fight seen through
+            # heavy VFX may never settle, and a wrong commitment is worse than
+            # none.
+            if candidate > 0 and spread / candidate <= 0.35:
+                self._established_width = candidate
+
     def _remember(self, reading: ReelReading, bg_lab: np.ndarray) -> None:
         self._bg_lab = (
             bg_lab if self._bg_lab is None else self._bg_lab * 0.85 + bg_lab * 0.15
         )
+        if reading.bar_width is not None:
+            self._establish_width(reading.bar_width)
         if reading.bar_width is not None:
             if self._bar_width_prior is None:
                 self._bar_width_prior = reading.bar_width
