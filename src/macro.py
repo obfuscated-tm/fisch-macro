@@ -17,6 +17,7 @@ from typing import Callable, Optional, List
 from src.movement_tracker import MovementTracker
 from src.vision import VisionSnapshot
 from src.reel_controller import ControlParams, ReelController
+from src.fight_estimator import FightEstimator
 
 logger = logging.getLogger("macro")
 
@@ -136,6 +137,10 @@ class MacroEngine:
         self._prev_progress = 0.0
         self._fish_tracker = MovementTracker()
         self._reel_controller = ReelController()
+        # Works out what kind of fight this is while fighting it: the gain and
+        # loss rates, and so the on-target fraction this particular fish demands.
+        self._estimator = FightEstimator()
+        self._lost_fight_count = 0
         self._last_good_read_time = 0.0
         self._last_live_minigame_time = 0.0
         self._near_finish_streak = 0
@@ -397,6 +402,8 @@ class MacroEngine:
         self._last_progress_gain_time = time.time()
         self._progress_collapse_count = 0
         self._reel_stall_count = 0
+        self._estimator.reset()
+        self._lost_fight_count = 0
 
     def _reset_post_catch_gate(self) -> None:
         """Require the minigame UI to clear before the next bite can start."""
@@ -682,12 +689,21 @@ class MacroEngine:
         return True
 
     def _reel_stall_likely_ended(self, result, settings, elapsed: float) -> bool:
-        """Long fight with no progress gain — minigame likely finished but UI lingers."""
+        """Long fight with no progress gain — minigame likely finished but UI lingers.
+
+        How long counts as long is measured, not fixed. A neutral fish finishes
+        in 8 s, but the median fish's -40% Progress Speed makes it 12.5 s and a
+        p25 fish's -80% makes it 35 s, so any single constant is either too
+        tight for the slow fish or useless for the fast one. The estimator
+        projects this fight's own finishing time from the rates it has observed,
+        and the configured value becomes a floor rather than the rule.
+        """
         if elapsed < settings.min_catch_seconds:
             return False
         if self._raw_peak_progress < settings.reel_stall_min_peak:
             return False
-        if time.time() - self._last_progress_gain_time < settings.reel_stall_seconds:
+        stall_after = self._estimator.stall_seconds(floor=settings.reel_stall_seconds)
+        if time.time() - self._last_progress_gain_time < stall_after:
             return False
         if result.progress > self._raw_peak_progress * 0.5:
             return False
@@ -970,6 +986,15 @@ class MacroEngine:
 
         smooth_progress = self._update_progress_tracking(result.progress, settings)
 
+        fight = self._estimator.update(
+            time.time(),
+            result.progress,
+            bool(result.on_target),
+            result.bar_left,
+            result.bar_right,
+            result.fish_x,
+        )
+
         if elapsed >= settings.reeling_guard_seconds:
             if self._peak_progress >= settings.min_midgame_progress:
                 self._saw_midgame_progress = True
@@ -1026,6 +1051,31 @@ class MacroEngine:
                     return
             else:
                 self._reel_stall_count = 0
+
+            # A fight can be unwinnable rather than merely slow. Progress is
+            # gained at 12%/s scaled by the fish's Progress Speed but lost at a
+            # flat 12%/s, so a fish at -80% needs the bar over it 83% of the
+            # time; with a narrow rod against a fast fish that is not reachable,
+            # and no extra minutes will change it. Once coverage has stayed
+            # under what the fight demands, letting go and recasting beats
+            # spending another half minute confirming it.
+            if (
+                elapsed >= settings.min_catch_seconds
+                and self._estimator.verdict() == "lost"
+            ):
+                self._lost_fight_count += 1
+                if self._lost_fight_count >= settings.lost_fight_confirm_frames:
+                    logger.info(
+                        "Abandoning: on-target %.0f%% against %.0f%% needed "
+                        "(progress speed ~%+.0f%%)",
+                        fight.on_target_fraction * 100.0,
+                        (fight.required_on_target or 0.0) * 100.0,
+                        fight.progress_speed or 0.0,
+                    )
+                    self._finish_catch(result, settings, "Fight Lost")
+                    return
+            else:
+                self._lost_fight_count = 0
         else:
             self._progress_finish_count = 0
             self._progress_finish_low_count = 0

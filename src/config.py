@@ -109,6 +109,9 @@ class Settings:
         progress_collapse_min_peak: Raw peak progress required to treat a collapse as fight end.
         progress_collapse_confirm_frames: Consecutive collapse frames before completing catch.
         reel_stall_seconds: Seconds without progress gain before allowing stall-based completion.
+            A floor: the actual bound is projected per fight from the measured progress rates,
+            because catch time runs from 8s at a neutral fish to 35s at a slow one.
+        lost_fight_confirm_frames: Frames of "this fight cannot be won" before abandoning it.
         reel_stall_min_peak: Raw peak required for stall-based completion.
         left_stall_bar_edge: Bar left edge below this triggers left-side recovery hold logic.
         prediction_stationary_speed: Below this speed (norm/s), prediction blend fades to zero.
@@ -185,6 +188,12 @@ class Settings:
     progress_collapse_min_peak: float = 0.55
     progress_collapse_confirm_frames: int = 5
     reel_stall_seconds: float = 18.0
+
+    # Consecutive frames the estimator must call a fight lost before letting go.
+    # High, because abandoning a catchable fish costs more than sitting on an
+    # uncatchable one: the verdict is only consulted after min_catch_seconds and
+    # it takes several seconds of coverage below what the fight needs to reach.
+    lost_fight_confirm_frames: int = 30
     reel_stall_min_peak: float = 0.60
     left_stall_bar_edge: float = 0.12
     prediction_stationary_speed: float = 0.04
