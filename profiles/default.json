@@ -32,13 +32,13 @@
   ],
   "off_target_hsv_low": [
     0,
-    52,
+    39,
     30
   ],
   "off_target_hsv_high": [
-    27,
-    192,
-    145
+    30,
+    179,
+    147
   ],
   "bar_brightness_threshold": 149,
   "description": "Default profile - works with most standard rods",

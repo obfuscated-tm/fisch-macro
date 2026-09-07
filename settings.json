@@ -35,6 +35,7 @@
   "min_catch_seconds": 4.0,
   "shake_click_cooldown_seconds": 0.12,
   "shake_min_confidence": 0.42,
+  "shake_scan_every": 4,
   "action_min_dwell_seconds": 0.08,
   "stable_hysteresis_multiplier": 1.5,
   "pd_deadband": 0.02,
@@ -78,6 +79,13 @@
   "track_search_expand": 3.0,
   "control_bar_accel": 1.0,
   "control_latency_seconds": 0.06,
+  "blind_coast_seconds": 0.12,
+  "fish_relative_strength": 0.45,
+  "fish_max_speed": 4.0,
+  "control_neutral_duty": 0.538,
+  "control_duty_kp": 10.0,
+  "control_duty_ki": 0.6,
+  "control_max_brake_distance": 0.35,
   "control_lead_seconds": 0.07,
   "control_stationary_speed": 0.05
 }
