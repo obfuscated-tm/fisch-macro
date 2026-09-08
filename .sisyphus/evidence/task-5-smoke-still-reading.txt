@@ -1,2 +1,0 @@
-PASS: still bar+fish refused indefinitely; moving bar+fish starts
-reeling on the second tick (~20ms later at the default interval).

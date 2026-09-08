@@ -1,2 +1,0 @@
-PASS: premature finish is blocked during the reeling guard window.
-actions=['release', 'hold', 'release']

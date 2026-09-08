@@ -1,2 +1,0 @@
-PASS: auto shake clicks while waiting.
-actions=['click']

@@ -1,1 +1,0 @@
-PASS: synthetic SHAKE detected at (321, 200) confidence=0.71

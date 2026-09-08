@@ -1,4 +1,0 @@
-PASS: Bar velocity compensation creates appropriate bias for left-moving bar.
-actions=['release', 'release', 'hold', 'release', 'hold'], holds=2, releases=3
-PASS: Bar velocity compensation creates appropriate bias for right-moving bar.
-actions=['release', 'release', 'hold', 'release', 'hold'], holds=2, releases=3

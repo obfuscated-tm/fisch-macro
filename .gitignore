@@ -2,6 +2,23 @@ __pycache__/
 *.py[cod]
 .DS_Store
 
+# Virtualenvs. These used to be kept out only by the `.gitignore` that venv
+# writes into itself, which disappears the moment one is rebuilt by a tool
+# that does not.
+venv/
+brew_venv/
+.pytest_cache/
+
+# Runtime output. logs/macro.log is rewritten on every run and was committed
+# for a while, at up to 800 KB a time.
+logs/
+*.log
+
+# Agent scratch state: session ids, absolute paths from whichever machine ran
+# the plan, and evidence dumps that scripts/smoke_fisch_macro.py regenerates.
+.sisyphus/
+.claude/
+
 # Offline test data: extracted frames and annotated output are large and
 # regenerable from tests/clips via scripts/extract_frames.py.
 tests/frames/

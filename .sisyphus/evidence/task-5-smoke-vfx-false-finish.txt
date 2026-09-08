@@ -1,2 +1,0 @@
-PASS: VFX false-finish scenario does not trigger premature completion.
-actions=['release', 'hold', 'release', 'hold', 'release', 'hold', 'release']

@@ -1,2 +1,0 @@
-PASS: centred fish produces bounded hold/release, never a runaway hold.
-actions=['release', 'hold', 'release', 'hold', 'release']
