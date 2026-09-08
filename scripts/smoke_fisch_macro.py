@@ -147,6 +147,11 @@ def scenario_synthetic_shake_detected() -> None:
     # a measurement of it; no capture of a real SHAKE prompt exists in
     # tests/clips to check either against. If the macro ever misses real shake
     # prompts, this pair is the thing to re-derive from a screenshot.
+    #
+    # One shape is known to be outside the model: a *thin* (3px) pure-white
+    # ring around a smaller dark fill scores nothing at all here. Whether that
+    # is a gap in the detector or simply not what the prompt looks like cannot
+    # be settled without a capture, so it is written down rather than asserted.
     radius = 52
     frame = np.zeros((400, 600, 3), dtype=np.uint8)
     cv2.circle(frame, (320, 200), radius, (230, 230, 230), -1)
@@ -167,9 +172,34 @@ def scenario_synthetic_shake_detected() -> None:
 
     assert pos is not None, "synthetic SHAKE button should be detected"
     assert confidence >= 0.42, f"confidence too low: {confidence}"
+
+    # Bright UI that is not a ringed button must not register. The brightness
+    # gate is the part of the scorer most likely to be loosened when a real
+    # SHAKE prompt is eventually captured and the model above is re-derived,
+    # and these are the shapes that would start slipping through if it were
+    # loosened too far.
+    negatives = {}
+    blob = np.zeros((400, 600, 3), dtype=np.uint8)
+    cv2.circle(blob, (300, 200), 40, (245, 245, 245), -1)
+    negatives["solid white blob"] = blob
+    stripe = np.zeros((400, 600, 3), dtype=np.uint8)
+    cv2.rectangle(stripe, (0, 180), (600, 220), (240, 240, 240), -1)
+    negatives["bright stripe"] = stripe
+    plates = np.zeros((400, 600, 3), dtype=np.uint8)
+    for px, py in ((80, 90), (250, 300), (480, 120)):
+        cv2.rectangle(plates, (px, py), (px + 70, py + 18), (235, 235, 235), -1)
+    negatives["white nameplates"] = plates
+
+    for label, neg_frame in negatives.items():
+        neg_pos, neg_conf = detector.detect_shake_button(neg_frame)
+        assert neg_pos is None, f"{label} must not register as SHAKE (conf={neg_conf})"
+
     write_evidence(
         "task-5-smoke-synthetic-shake.txt",
-        [f"PASS: synthetic SHAKE detected at {pos} confidence={confidence:.2f}"],
+        [
+            f"PASS: synthetic SHAKE detected at {pos} confidence={confidence:.2f}",
+            f"PASS: rejected non-button bright UI: {', '.join(negatives)}",
+        ],
     )
 
 
