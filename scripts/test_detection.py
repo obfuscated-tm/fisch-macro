@@ -10,6 +10,16 @@ also how calibration is meant to work now — see --roi-from-settings to instead
 use the hand-calibrated bar_roi out of settings.json.
 
 Writes annotated PNGs to tests/out/<clip>/ and a readings CSV alongside them.
+
+A caveat when measuring against these clips: the recordings are of the whole
+desktop, so every ROI here is placed by find_viewport, which locates the game
+by its window chrome. That estimate moves between frames -- by a couple of
+pixels on most clips and by 28 on tests/frames/STRUGGLE-ROD, where the
+recording spans a window resize -- so a crop that is on target in one frame can
+be off it in the next. Production does not go through this path at all; it
+captures the Roblox window directly. So a detection rate measured here is a
+lower bound, and a rate that differs between two clips may be saying something
+about the recording rather than about the rod.
 """
 
 import argparse
