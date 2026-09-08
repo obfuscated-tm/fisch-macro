@@ -10,7 +10,7 @@ Provides utilities for:
 
 import logging
 import time
-from typing import Optional, Tuple, List
+from typing import Optional, Tuple
 
 import cv2
 import numpy as np

@@ -1,4 +1,0 @@
-PASS: Bar velocity compensation creates appropriate bias for left-moving bar.
-actions=['rapid_click', 'rapid_click', 'rapid_click', 'rapid_click', 'rapid_click'], holds=0, releases=0
-PASS: Bar velocity compensation creates appropriate bias for right-moving bar.
-actions=['rapid_click', 'rapid_click', 'rapid_click', 'rapid_click', 'rapid_click'], holds=0, releases=0

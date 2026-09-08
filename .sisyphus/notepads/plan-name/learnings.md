@@ -1,6 +1,0 @@
-- Reviewed macro.py and config.py for Fisch macro stabilization
-- Smoke tests pass for guard window, flicker hysteresis, and stable target scenarios
-- Found dead variables: _reel_no_detection_count and _progress_stuck_count (never read after initialization)
-- Exit condition logic in _do_reeling has duplicated code that could be refactored
-- Action dwell rate-limiting and hysteresis logic appear correct
-- No syntax errors or blocking issues found

@@ -1,2 +1,0 @@
-PASS: flicker hysteresis prevents early stop.
-actions=['rapid_click', 'rapid_click', 'rapid_click', 'rapid_click']

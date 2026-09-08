@@ -1,2 +1,0 @@
-PASS: stable target stays in the stable/hover path without hold/release thrash.
-actions=['rapid_click', 'rapid_click', 'rapid_click', 'rapid_click', 'rapid_click']

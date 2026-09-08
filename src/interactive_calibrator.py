@@ -1,7 +1,7 @@
 import logging
 import time
 import tkinter as tk
-from tkinter import ttk, messagebox
+from tkinter import messagebox
 import cv2
 import numpy as np
 from PIL import Image, ImageTk
@@ -20,6 +20,11 @@ COLORS = {
     "accent_blue": "#4fc3f7",
     "text": "#ffffff",
 }
+
+
+def _clamp01(value: float) -> float:
+    return min(1.0, max(0.0, float(value)))
+
 
 class InteractiveCalibrator(tk.Toplevel):
     """
@@ -49,6 +54,10 @@ class InteractiveCalibrator(tk.Toplevel):
         self.rect_start = None
         self.current_rect_id = None
         self.drawn_rects = {}  # Store rect IDs for the different ROIs
+        # Which steps this session has actually changed. Drives the checklist
+        # and the confirmation on Cancel, so the window can say what is about
+        # to be thrown away rather than silently throwing it away.
+        self.completed = set()
 
         if background_bgr is not None:
             self._load_screenshot_frame(background_bgr)
@@ -141,77 +150,128 @@ class InteractiveCalibrator(tk.Toplevel):
             self.attributes("-fullscreen", True)
         self.lift()
 
+    #: (mode, button label, one-line instruction) for each calibration step.
+    STEPS = (
+        ("fish_color", "1 · Fish colour",
+         "Click the FISH icon inside the reel bar (usually pink)."),
+        ("on_target_color", "2 · Bar on target",
+         "Click the reel bar while it is GREEN, i.e. sitting on the fish."),
+        ("off_target_color", "3 · Bar off target",
+         "Click the reel bar while it is WHITE or ORANGE, i.e. off the fish."),
+        ("bar_roi", "4 · Reel bar area",
+         "Drag a box around the whole slider track, end to end."),
+        ("progress_roi", "5 · Progress bar",
+         "Drag a box over the catch progress bar below the track."),
+        ("shake_roi", "6 · Shake area",
+         "Drag a big box over the area where SHAKE prompts appear."),
+    )
+
     def _build_ui(self):
         """Build the canvas and the control toolbar."""
         # Canvas
         self.canvas = tk.Canvas(
-            self, 
-            width=self.photo_img.width(), 
-            height=self.photo_img.height(), 
+            self,
+            width=self.photo_img.width(),
+            height=self.photo_img.height(),
             highlightthickness=0,
             cursor="crosshair"
         )
         self.canvas.pack(fill=tk.BOTH, expand=True)
         self._bg_image_id = self.canvas.create_image(0, 0, image=self.photo_img, anchor=tk.NW)
-        
+
         # Control Toolbar
         self.toolbar = tk.Frame(self.canvas, bg=COLORS["bg_card"], bd=2, relief=tk.RAISED)
         self.toolbar.place(relx=0.5, y=20, anchor=tk.N)
-        
+
+        tk.Label(
+            self.toolbar,
+            text=f"Calibrating rod:  {self.profile.name}",
+            fg=COLORS["accent_blue"], bg=COLORS["bg_card"],
+            font=("Helvetica Neue", 12),
+        ).pack(side=tk.TOP, pady=(8, 0), padx=20)
+
         # Instruction Label
         self.instruction_label = tk.Label(
-            self.toolbar, 
-            text="Select a tool below to begin calibration.",
+            self.toolbar,
+            text="Pick a step below. Work through 1–6, then press Save & Close.",
             fg=COLORS["text"], bg=COLORS["bg_card"],
             font=("Helvetica Neue", 16, "bold")
         )
-        self.instruction_label.pack(side=tk.TOP, pady=(10, 5), padx=20)
-        
+        self.instruction_label.pack(side=tk.TOP, pady=(4, 6), padx=20)
+
         btn_frame = tk.Frame(self.toolbar, bg=COLORS["bg_card"])
-        btn_frame.pack(side=tk.TOP, pady=(0, 10), padx=10)
-        
-        # Buttons
+        btn_frame.pack(side=tk.TOP, pady=(0, 8), padx=10)
+
         self.buttons = {}
-        
-        def create_btn(text, mode, color):
+        for mode, label, _hint in self.STEPS:
+            colour = COLORS["accent"] if mode.endswith("_color") else COLORS["accent_blue"]
             btn = tk.Button(
-                btn_frame, text=text, font=("Helvetica Neue", 12),
-                bg=color, fg="white", cursor="hand2",
-                command=lambda: self._set_mode(mode)
+                btn_frame, text=label, font=("Helvetica Neue", 12),
+                bg=colour, fg="white", cursor="hand2",
+                highlightbackground=COLORS["bg_card"],
+                command=lambda m=mode: self._set_mode(m),
             )
             btn.pack(side=tk.LEFT, padx=3)
             self.buttons[mode] = btn
-            return btn
-            
-        create_btn("1. Fish Color", "fish_color", COLORS["accent"])
-        create_btn("2. On-Target Bar", "on_target_color", COLORS["accent_green"])
-        create_btn("3. Off-Target Bar", "off_target_color", COLORS["accent_yellow"])
-        create_btn("4. Bar Bounds", "bar_roi", COLORS["accent_blue"])
-        create_btn("5. Progress", "progress_roi", COLORS["accent_blue"])
-        create_btn("6. Shake", "shake_roi", COLORS["accent_blue"])
-        
-        tk.Label(btn_frame, text=" | ", bg=COLORS["bg_card"], fg="white").pack(side=tk.LEFT, padx=5)
+
+        action_frame = tk.Frame(self.toolbar, bg=COLORS["bg_card"])
+        action_frame.pack(side=tk.TOP, pady=(0, 8), padx=10)
 
         tk.Button(
-            btn_frame, text="Retake Screenshot", font=("Helvetica Neue", 12),
+            action_frame, text="Retake screenshot", font=("Helvetica Neue", 12),
             bg="#5c6bc0", fg="white", cursor="hand2", command=self._retake_screenshot
         ).pack(side=tk.LEFT, padx=3)
 
         tk.Button(
-            btn_frame, text="Save & Close", font=("Helvetica Neue", 12, "bold"),
+            action_frame, text="✓ Save & Close", font=("Helvetica Neue", 12, "bold"),
             bg="#28a745", fg="white", cursor="hand2", command=self._save_and_close
         ).pack(side=tk.LEFT, padx=3)
-        
+
         tk.Button(
-            btn_frame, text="Cancel", font=("Helvetica Neue", 12),
-            bg="#dc3545", fg="white", cursor="hand2", command=self.destroy
+            action_frame, text="✕ Cancel", font=("Helvetica Neue", 12),
+            bg="#dc3545", fg="white", cursor="hand2", command=self._cancel
         ).pack(side=tk.LEFT, padx=3)
-        
+
+        # Checklist: what this session has changed, and what is still untouched.
+        self.checklist_label = tk.Label(
+            self.toolbar, text="", fg="#a0aabf", bg=COLORS["bg_card"],
+            font=("Menlo", 11),
+        )
+        self.checklist_label.pack(side=tk.TOP, pady=(0, 4))
+
         # Info readout
         self.info_label = tk.Label(
-            self.toolbar, text="", fg="#a0aabf", bg=COLORS["bg_card"], font=("Helvetica Neue", 12)
+            self.toolbar, text="", fg=COLORS["accent_green"], bg=COLORS["bg_card"],
+            font=("Helvetica Neue", 12)
         )
-        self.info_label.pack(side=tk.TOP, pady=(0, 5))
+        self.info_label.pack(side=tk.TOP, pady=(0, 8))
+
+        self._refresh_checklist()
+
+    def _refresh_checklist(self):
+        """Redraw the ✓/· line and re-mark the step buttons."""
+        marks = []
+        for mode, label, _hint in self.STEPS:
+            done = mode in self.completed
+            marks.append(("✓ " if done else "·  ") + label.split(" · ")[1])
+            self.buttons[mode].config(
+                text=("✓ " if done else "") + label,
+                relief=tk.SUNKEN if mode == self.mode else tk.RAISED,
+                font=("Helvetica Neue", 12, "bold") if mode == self.mode
+                else ("Helvetica Neue", 12),
+            )
+        self.checklist_label.config(text="   ".join(marks))
+
+    def _cancel(self):
+        """Close without saving, warning first if there is anything to lose."""
+        if self.completed and not messagebox.askyesno(
+            "Discard Calibration",
+            "Close without saving?\n\n"
+            f"{len(self.completed)} step(s) you changed will be discarded.",
+            parent=self,
+        ):
+            return
+        self.destroy()
 
     def _draw_existing_rois(self):
         """Draw current saved ROI boxes as a starting point."""
@@ -257,54 +317,36 @@ class InteractiveCalibrator(tk.Toplevel):
         self.canvas.bind("<ButtonPress-1>", self._on_press)
         self.canvas.bind("<B1-Motion>", self._on_drag)
         self.canvas.bind("<ButtonRelease-1>", self._on_release)
-        # Also bind escape to cancel
-        self.bind("<Escape>", lambda e: self.destroy())
+        # Escape is Cancel, confirmation and all — it used to destroy the
+        # window outright, which threw away picked colours with no warning.
+        self.bind("<Escape>", lambda _e: self._cancel())
 
     def _set_mode(self, mode):
+        """Select a calibration step and show its instruction."""
         self.mode = mode
-        
-        # Reset button styles
-        for m, btn in self.buttons.items():
-            btn.config(relief=tk.RAISED, font=("Helvetica Neue", 12))
-            
-        # Highlight active button
-        if mode in self.buttons:
-            self.buttons[mode].config(relief=tk.SUNKEN, font=("Helvetica Neue", 12, "bold"))
-            
-        # Update instructions
-        if mode == "fish_color":
-            self.instruction_label.config(text="1. PICK FISH: Click exactly on the PINK fish icon in the bar.")
-        elif mode == "on_target_color":
-            self.instruction_label.config(text="2. ON-TARGET: Click the bar when it turns GREEN (on the fish).")
-        elif mode == "off_target_color":
-            self.instruction_label.config(text="3. OFF-TARGET: Click the bar when it is WHITE/ORANGE (off the fish).")
-        elif mode == "bar_roi":
-            self.instruction_label.config(text="4. BAR AREA: Draw a box covering the entire slider track.")
-        elif mode == "progress_roi":
-            self.instruction_label.config(text="5. PROGRESS: Draw a box over the catch progress bar at the bottom.")
-        elif mode == "shake_roi":
-            self.instruction_label.config(text="6. SHAKE: Draw a large box over the middle where 'SHAKE' buttons appear.")
-        elif mode.endswith("_roi"):
-            name = mode.split("_")[0].capitalize()
-            self.instruction_label.config(text=f"Click and drag to draw a box around the {name} region.")
+        for step_mode, _label, hint in self.STEPS:
+            if step_mode == mode:
+                self.instruction_label.config(text=hint)
+                break
+        self._refresh_checklist()
 
     def _on_press(self, event):
         if not self.mode:
             return
-            
+
         if self.mode.endswith("_color"):
             # Color picking
             physical_x = int(event.x * self.scale_factor)
             physical_y = int(event.y * self.scale_factor)
-            
+
             # Ensure within bounds
             h, w = self.raw_bgr.shape[:2]
             if 0 <= physical_x < w and 0 <= physical_y < h:
                 bgr = self.raw_bgr[physical_y, physical_x]
                 hsv = cv2.cvtColor(np.uint8([[bgr]]), cv2.COLOR_BGR2HSV)[0][0]
-                
+
                 h_val, s_val, v_val = hsv
-                
+
                 # Dynamic padding based on mode
                 if self.mode == "fish_color":
                     # Pink fish needs specific hue but can be bright
@@ -316,34 +358,37 @@ class InteractiveCalibrator(tk.Toplevel):
                     h_low, h_high = max(0, int(h_val)-25), min(179, int(h_val)+25)
                     s_low, s_high = max(30, int(s_val)-70), min(255, int(s_val)+70)
                     v_low, v_high = max(30, int(v_val)-70), min(255, int(v_val)+70)
-                
+
                 low_arr = [h_low, s_low, v_low]
                 high_arr = [h_high, s_high, v_high]
-                
+
                 if self.mode == "fish_color":
                     self.profile.fish_hsv_low = low_arr
                     self.profile.fish_hsv_high = high_arr
-                    self.info_label.config(text=f"Fish Color Saved! HSV: {low_arr} to {high_arr}")
+                    self.info_label.config(text=f"Fish colour picked — HSV {low_arr} to {high_arr}")
                 elif self.mode == "on_target_color":
                     self.profile.on_target_hsv_low = low_arr
                     self.profile.on_target_hsv_high = high_arr
                     # Also update the general bar color for backward compatibility
                     self.profile.bar_hsv_low = low_arr
                     self.profile.bar_hsv_high = high_arr
-                    self.info_label.config(text=f"On-Target Color Saved! HSV: {low_arr} to {high_arr}")
+                    self.info_label.config(text=f"On-target colour picked — HSV {low_arr} to {high_arr}")
                 elif self.mode == "off_target_color":
                     self.profile.off_target_hsv_low = low_arr
                     self.profile.off_target_hsv_high = high_arr
-                    self.info_label.config(text=f"Off-Target Color Saved! HSV: {low_arr} to {high_arr}")
-        
+                    self.info_label.config(text=f"Off-target colour picked — HSV {low_arr} to {high_arr}")
+
+                self.completed.add(self.mode)
+                self._refresh_checklist()
+
         elif self.mode.endswith("_roi"):
             # ROI Drawing
             self.rect_start = (event.x, event.y)
-            
+
             # Clear previous rect for this mode if it exists
             if self.mode in self.drawn_rects:
                 self.canvas.delete(self.drawn_rects[self.mode])
-                
+
             color = "red" if "shake" in self.mode else "green" if "bar" in self.mode else "blue"
             self.current_rect_id = self.canvas.create_rectangle(
                 event.x, event.y, event.x, event.y, outline=color, width=3
@@ -353,7 +398,7 @@ class InteractiveCalibrator(tk.Toplevel):
     def _on_drag(self, event):
         if not self.mode or not self.mode.endswith("_roi") or not self.rect_start:
             return
-            
+
         x0, y0 = self.rect_start
         self.canvas.coords(self.current_rect_id, x0, y0, event.x, event.y)
 
@@ -372,24 +417,24 @@ class InteractiveCalibrator(tk.Toplevel):
     def _handle_release(self, event):
         if not self.mode or not self.mode.endswith("_roi") or not self.rect_start:
             return
-            
+
         x0, y0 = self.rect_start
         x1, y1 = event.x, event.y
-        
+
         # Ensure x0,y0 is top-left and x1,y1 is bottom-right
         rx = min(x0, x1)
         ry = min(y0, y1)
         rw = max(x0, x1) - rx
         rh = max(y0, y1) - ry
-        
+
         self.rect_start = None
-        
+
         if rw < 10 or rh < 10:
             self.info_label.config(text="Drawn region too small. Try again.")
             self.canvas.delete(self.current_rect_id)
             self.drawn_rects.pop(self.mode, None)
             return
-            
+
         # Convert to normalized bounds
         window_bounds = self.window_bounds or self.window_tracker.get_roblox_bounds()
         if not window_bounds:
@@ -397,11 +442,11 @@ class InteractiveCalibrator(tk.Toplevel):
             self.canvas.delete(self.current_rect_id)
             self.drawn_rects.pop(self.mode, None)
             return
-            
+
         # Use calibrator utility to compute normalized bounds
         from src.calibrator import Calibrator
         calibrator = Calibrator(self.engine.detector, self.config)
-        
+
         screen_rect = (
             int(rx + self._logical_monitor_left()),
             int(ry + self._logical_monitor_top()),
@@ -412,8 +457,20 @@ class InteractiveCalibrator(tk.Toplevel):
         if norm_bounds["x_end"] <= norm_bounds["x_start"] or norm_bounds["y_end"] <= norm_bounds["y_start"]:
             raise ValueError("The box must overlap the Roblox window. Draw the box inside the Roblox game area.")
 
-        roi = ROIBounds(**norm_bounds)
-        
+        # Take the ROI shift back out. Capture applies it (see
+        # Detector._compute_roi_pixels) and _draw_existing_rois draws the
+        # existing boxes with it applied, but the conversion above is purely
+        # window-relative — so storing its result verbatim moved every freshly
+        # drawn box by the shift, away from where the user drew it.
+        roi = ROIBounds(
+            x_start=_clamp01(norm_bounds["x_start"] - self.settings.roi_shift_x),
+            x_end=_clamp01(norm_bounds["x_end"] - self.settings.roi_shift_x),
+            y_start=_clamp01(norm_bounds["y_start"] - self.settings.roi_shift_y),
+            y_end=_clamp01(norm_bounds["y_end"] - self.settings.roi_shift_y),
+        )
+
+        label = dict((m, l) for m, l, _h in self.STEPS).get(self.mode, self.mode)
+
         if self.mode == "bar_roi":
             self.settings.bar_roi = roi
             threshold = self._estimate_active_bar_threshold(rx, ry, rw, rh)
@@ -423,13 +480,16 @@ class InteractiveCalibrator(tk.Toplevel):
             self.settings.shake_roi = roi
         elif self.mode == "progress_roi":
             self.settings.progress_roi = roi
-            
+
         extra = ""
         if self.mode == "bar_roi":
-            extra = f", brightness threshold: {self.profile.bar_brightness_threshold}"
+            extra = f"  ·  brightness threshold {self.profile.bar_brightness_threshold}"
         self.info_label.config(
-            text=f"Saved {self.mode}! X: {roi.x_start:.2f}-{roi.x_end:.2f}, Y: {roi.y_start:.2f}-{roi.y_end:.2f}{extra}"
+            text=f"{label} set — x {roi.x_start * 100:.1f}–{roi.x_end * 100:.1f}%"
+                 f"  y {roi.y_start * 100:.1f}–{roi.y_end * 100:.1f}%{extra}"
         )
+        self.completed.add(self.mode)
+        self._refresh_checklist()
 
     def _estimate_active_bar_threshold(self, x, y, width, height):
         """Estimate brightness threshold from the user-selected active bar ROI."""
@@ -453,12 +513,29 @@ class InteractiveCalibrator(tk.Toplevel):
         return int(np.clip(mean_brightness + 35, 50, 180))
 
     def _save_and_close(self):
-        """Save settings and profile, then destroy the window."""
+        """Write both the working regions and the rod profile, then close.
+
+        The regions go to settings.json (what the macro captures from) *and*
+        to the rod profile (what switching back to this rod restores), so the
+        two cannot drift apart. Colours were written into ``self.profile`` as
+        they were picked; nothing reaches disk until here, which is what makes
+        Cancel able to discard them.
+        """
+        if not self.completed and not messagebox.askyesno(
+            "Nothing Changed",
+            "No steps were changed in this session.\n\nSave anyway?",
+            parent=self,
+        ):
+            return
+
         self.profile.bar_roi = self.settings.bar_roi
         self.profile.progress_roi = self.settings.progress_roi
         self.profile.shake_roi = self.settings.shake_roi
-        
-        # New: color profile persistence is already done in _on_press directly to self.profile
+
         self.config.save_settings(self.settings)
         self.config.save_profile(self.profile)
+        logger.info(
+            "Calibration saved to rod %r (%d step(s) changed)",
+            self.profile.name, len(self.completed),
+        )
         self.destroy()

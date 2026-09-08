@@ -1,2 +1,0 @@
-PASS: left stall recovery issues hold.
-actions=['hold', 'hold', 'hold']

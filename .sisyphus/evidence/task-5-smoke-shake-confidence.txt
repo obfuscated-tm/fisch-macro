@@ -1,2 +1,0 @@
-PASS: low-confidence shake detection ignored.
-actions=[]

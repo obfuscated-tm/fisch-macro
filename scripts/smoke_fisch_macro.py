@@ -33,6 +33,11 @@ class DetectionResult:
     progress: float = 0.0
     shake_pos: tuple[int, int] | None = None
     shake_confidence: float = 0.0
+    # Mirrors src.detector.DetectionResult; keep these in step with it.
+    debug_frame: object | None = None
+    debug_source: object | None = None
+    reading: object | None = None
+    track_box: tuple[int, int, int, int] | None = None
 
 
 class FakeDetector:
@@ -40,7 +45,7 @@ class FakeDetector:
         self._results = list(results)
         self._fallback = self._results[-1] if self._results else DetectionResult()
 
-    def detect_all(self) -> DetectionResult:
+    def detect_all(self, scan_shake: bool = True) -> DetectionResult:
         if self._results:
             return self._results.pop(0)
         return self._fallback
@@ -132,9 +137,26 @@ def scenario_synthetic_shake_detected() -> None:
     from src.config import ConfigManager
     from src.detector import Detector
 
+    # The button Detector._shake_button_score models: a dark disc inside a
+    # thick white annulus, with white text across the middle. This fixture used
+    # to draw a four-pixel outline instead, which the detector accepted back
+    # when it took any bright contour of roughly the right size and has
+    # rejected ever since it started checking the ring -- so the scenario has
+    # been failing, and everything after it in this file never ran.
+    #
+    # NOTE: the proportions here are the detector's model of the Fisch UI, not
+    # a measurement of it; no capture of a real SHAKE prompt exists in
+    # tests/clips to check either against. If the macro ever misses real shake
+    # prompts, this pair is the thing to re-derive from a screenshot.
+    #
+    # One shape is known to be outside the model: a *thin* (3px) pure-white
+    # ring around a smaller dark fill scores nothing at all here. Whether that
+    # is a gap in the detector or simply not what the prompt looks like cannot
+    # be settled without a capture, so it is written down rather than asserted.
+    radius = 52
     frame = np.zeros((400, 600, 3), dtype=np.uint8)
-    cv2.circle(frame, (320, 200), 52, (230, 230, 230), 4)
-    cv2.circle(frame, (320, 200), 46, (25, 25, 28), -1)
+    cv2.circle(frame, (320, 200), radius, (230, 230, 230), -1)
+    cv2.circle(frame, (320, 200), int(radius * 0.55), (25, 25, 28), -1)
     cv2.putText(
         frame, "SHAKE", (285, 210), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (240, 240, 240), 2, cv2.LINE_AA
     )
@@ -151,9 +173,34 @@ def scenario_synthetic_shake_detected() -> None:
 
     assert pos is not None, "synthetic SHAKE button should be detected"
     assert confidence >= 0.42, f"confidence too low: {confidence}"
+
+    # Bright UI that is not a ringed button must not register. The brightness
+    # gate is the part of the scorer most likely to be loosened when a real
+    # SHAKE prompt is eventually captured and the model above is re-derived,
+    # and these are the shapes that would start slipping through if it were
+    # loosened too far.
+    negatives = {}
+    blob = np.zeros((400, 600, 3), dtype=np.uint8)
+    cv2.circle(blob, (300, 200), 40, (245, 245, 245), -1)
+    negatives["solid white blob"] = blob
+    stripe = np.zeros((400, 600, 3), dtype=np.uint8)
+    cv2.rectangle(stripe, (0, 180), (600, 220), (240, 240, 240), -1)
+    negatives["bright stripe"] = stripe
+    plates = np.zeros((400, 600, 3), dtype=np.uint8)
+    for px, py in ((80, 90), (250, 300), (480, 120)):
+        cv2.rectangle(plates, (px, py), (px + 70, py + 18), (235, 235, 235), -1)
+    negatives["white nameplates"] = plates
+
+    for label, neg_frame in negatives.items():
+        neg_pos, neg_conf = detector.detect_shake_button(neg_frame)
+        assert neg_pos is None, f"{label} must not register as SHAKE (conf={neg_conf})"
+
     write_evidence(
         "task-5-smoke-synthetic-shake.txt",
-        [f"PASS: synthetic SHAKE detected at {pos} confidence={confidence:.2f}"],
+        [
+            f"PASS: synthetic SHAKE detected at {pos} confidence={confidence:.2f}",
+            f"PASS: rejected non-button bright UI: {', '.join(negatives)}",
+        ],
     )
 
 
@@ -189,7 +236,12 @@ def scenario_intro_vfx_no_instant_catch() -> None:
         engine._do_reeling(settings)
 
     assert engine.state == MacroState.REELING, "intro VFX should not instantly complete"
-    assert "release" not in controller.actions
+    # The invariant is that no catch is registered — not that the mouse is
+    # never released. With nothing detectable on the track the controller now
+    # releases deliberately: an unheld bar drifts left and recovers, whereas a
+    # held one accelerates into the right wall and stays there.
+    assert engine.stats.fish_caught == 0, "intro VFX must not register a catch"
+    assert engine.stats.fish_failed == 0, "intro VFX must not register a failure"
     write_evidence(
         "task-5-smoke-intro-vfx-no-catch.txt",
         ["PASS: intro VFX does not register instant catch.", f"actions={controller.actions}"],
@@ -212,7 +264,9 @@ def scenario_premature_finish_blocked() -> None:
         engine._do_reeling(settings)
 
     assert engine.state == MacroState.REELING, "guard should block early success"
-    assert "release" not in controller.actions, "no catch completion should fire early"
+    # A release no longer implies a catch: the controller releases whenever
+    # it cannot see the bar, so completion is asserted on state and stats.
+    assert engine.stats.fish_caught == 0, "no catch completion should fire early"
     write_evidence(
         "task-5-smoke-premature-finish.txt",
         ["PASS: premature finish is blocked during the reeling guard window.", f"actions={controller.actions}"],
@@ -260,10 +314,19 @@ def scenario_stable_target_no_thrash() -> None:
         engine._do_reeling(settings)
 
     assert engine.state == MacroState.REELING, "stable input should keep reeling active"
-    assert set(controller.actions) <= {"rapid_click"}, "stable input should not thrash hold/release"
+    # The old macro answered a centred fish with rapid_click, treating it as a
+    # "hold position" input. It is not one: a click is a brief mouse-down, so it
+    # nudges the bar right every tick. This minigame has no neutral input at
+    # all, so the correct steady state is alternating hold/release, and the
+    # invariant worth protecting is that the bar does not run away — i.e. the
+    # controller never emits an unbroken sequence of holds.
+    assert "rapid_click" not in controller.actions, "clicking is not a hold-position input"
+    assert set(controller.actions) <= {"hold", "release"}, controller.actions
+    assert "release" in controller.actions, "a centred bar must not hold indefinitely"
     write_evidence(
         "task-5-smoke-stable-target.txt",
-        ["PASS: stable target stays in the stable/hover path without hold/release thrash.", f"actions={controller.actions}"],
+        ["PASS: centred fish produces bounded hold/release, never a runaway hold.",
+         f"actions={controller.actions}"],
     )
 
 
@@ -335,7 +398,9 @@ def scenario_vfx_false_finish() -> None:
         engine._do_reeling(settings)
 
     assert engine.state == MacroState.REELING, "VFX flash should not trigger premature finish"
-    assert "release" not in controller.actions, "no catch completion should fire from VFX flash"
+    # A release no longer implies a catch: the controller releases whenever
+    # it cannot see the bar, so completion is asserted on state and stats.
+    assert engine.stats.fish_caught == 0, "no catch should fire from a VFX flash"
     write_evidence(
         "task-5-smoke-vfx-false-finish.txt",
         ["PASS: VFX false-finish scenario does not trigger premature completion.", f"actions={controller.actions}"],
@@ -422,7 +487,12 @@ def scenario_bar_gone_catch_with_peak() -> None:
         engine._do_reeling(settings)
 
     assert engine.state == MacroState.COMPLETE, "high peak + bar gone should finish catch"
-    assert "release" in controller.actions
+    # The loop here keeps calling _do_reeling past completion, which the real
+    # engine never does, so count at least one rather than exactly one. The
+    # point is that it completed as a *catch* and not as a failure — the old
+    # assertion ("release" in actions) could not tell those apart.
+    assert engine.stats.fish_caught >= 1, "bar gone at high peak should count as a catch"
+    assert engine.stats.fish_failed == 0, "bar gone at high peak must not count as a failure"
     write_evidence(
         "task-5-smoke-bar-gone-catch.txt",
         ["PASS: bar-gone with high peak progress completes catch.", f"state={engine.state}"],
@@ -431,17 +501,7 @@ def scenario_bar_gone_catch_with_peak() -> None:
 
 def scenario_bar_velocity_compensation() -> None:
     """Test that bar velocity creates appropriate compensation bias."""
-    # Base detection result
-    base = DetectionResult(
-        bar_active=True,
-        bite_confirmed=True,
-        fish_x=0.50,  # Fish centered
-        bar_left=0.40,
-        bar_right=0.60,
-        on_target=True,
-        progress=0.50,
-    )
-    
+
     # Test case 1: Bar moving left (negative velocity) should bias toward hold
     # We simulate this by having changing bar positions over time
     moving_left_results = []
@@ -460,27 +520,27 @@ def scenario_bar_velocity_compensation() -> None:
             on_target=True,
             progress=0.50,
         ))
-    
+
     engine, controller, settings = make_engine(moving_left_results)
     engine._reeling_start_time = time.time() - 3.0  # Past guard window
-    
+
     # Execute the reeling logic multiple times
     for _ in range(len(moving_left_results)):
         engine._do_reeling(settings)
-    
+
     # With bar moving left, we expect a bias toward holding (positive pd_score)
     # This should result in more hold actions than release actions
     hold_count = controller.actions.count("hold")
     release_count = controller.actions.count("release")
-    
+
     # At minimum, we should not see more releases than holds due to leftward bias
     assert hold_count >= release_count, f"Expected hold bias for left-moving bar, got holds={hold_count}, releases={release_count}"
-    
+
     write_evidence(
         "task-5-smoke-bar-velocity-compensation.txt",
         ["PASS: Bar velocity compensation creates appropriate bias for left-moving bar.", f"actions={controller.actions}, holds={hold_count}, releases={release_count}"],
     )
-    
+
     # Test case 2: Bar moving right (positive velocity) should bias toward release
     controller.actions.clear()  # Reset actions
     moving_right_results = []
@@ -499,22 +559,22 @@ def scenario_bar_velocity_compensation() -> None:
             on_target=True,
             progress=0.50,
         ))
-    
+
     engine, controller, settings = make_engine(moving_right_results)
     engine._reeling_start_time = time.time() - 3.0  # Past guard window
-    
+
     # Execute the reeling logic multiple times
     for _ in range(len(moving_right_results)):
         engine._do_reeling(settings)
-    
+
     # With bar moving right, we expect a bias toward releasing (negative pd_score)
     # This should result in more release actions than hold actions
     hold_count = controller.actions.count("hold")
     release_count = controller.actions.count("release")
-    
+
     # At minimum, we should not see more holds than releases due to rightward bias
     assert release_count >= hold_count, f"Expected release bias for right-moving bar, got holds={hold_count}, releases={release_count}"
-    
+
     write_evidence(
         "task-5-smoke-bar-velocity-compensation.txt",
         ["PASS: Bar velocity compensation creates appropriate bias for left-moving bar.", f"actions={controller.actions}, holds={hold_count}, releases={release_count}",
@@ -642,6 +702,60 @@ def scenario_instant_bite_after_cast_release() -> None:
     )
 
 
+def scenario_still_reading_is_not_a_bite() -> None:
+    """A still picture of a bar and a fish must not start a fight.
+
+    The enchant panel draws a horizontal fill bar across the same rows as the
+    reel track, and the vision reads a bar and a fish out of it on 44% of the
+    non-fight frames in tests/frames/STRUGGLE-ROD2. A single frame cannot tell
+    the two apart; a reading that has not changed for several ticks can, since
+    the minigame is never still.
+    """
+    still = DetectionResult(
+        bar_active=True,
+        fish_x=0.50,
+        bar_left=0.35,
+        bar_right=0.65,
+        progress=0.20,
+    )
+    engine, controller, settings = make_engine([still] * 40)
+    engine.state = MacroState.WAITING
+    engine._post_catch_armed = True
+    engine._last_catch_time = 0.0
+
+    for _ in range(20):
+        engine._do_waiting(settings)
+    assert engine.state != MacroState.REELING, "a frozen reading must not start a fight"
+
+    # The same reading, once it starts moving, is a fight.
+    moving = [
+        DetectionResult(
+            bar_active=True,
+            fish_x=0.50 + 0.02 * i,
+            bar_left=0.35,
+            bar_right=0.65,
+            progress=0.20,
+        )
+        for i in range(6)
+    ]
+    engine, controller, settings = make_engine(moving)
+    engine.state = MacroState.WAITING
+    engine._post_catch_armed = True
+    engine._last_catch_time = 0.0
+    engine._do_waiting(settings)
+    assert engine.state != MacroState.REELING, "one frame cannot yet show movement"
+    engine._do_waiting(settings)
+    assert engine.state == MacroState.REELING, "a moving reading starts a fight on the second tick"
+
+    write_evidence(
+        "task-5-smoke-still-reading.txt",
+        [
+            "PASS: still bar+fish refused indefinitely; moving bar+fish starts",
+            "reeling on the second tick (~20ms later at the default interval).",
+        ],
+    )
+
+
 def scenario_bite_confirmed_without_bar_bounds() -> None:
     """Fish + bite_confirmed should start reeling before bar bounds lock in."""
     partial = DetectionResult(
@@ -668,6 +782,8 @@ def scenario_bite_confirmed_without_bar_bounds() -> None:
 def scenario_calibration_rejects_black_slide_frame() -> None:
     """Fullscreen slide artifacts should score worse than a normal frame."""
     try:
+        import numpy as np
+
         from src.calibrator import Calibrator
     except ImportError:
         write_evidence(
@@ -766,6 +882,7 @@ def main() -> int:
     scenario_progress_collapse_catch()
     scenario_post_catch_gate_then_new_bite()
     scenario_instant_bite_after_cast_release()
+    scenario_still_reading_is_not_a_bite()
     scenario_bite_confirmed_without_bar_bounds()
     scenario_calibration_rejects_black_slide_frame()
     scenario_stationary_no_overpredict()

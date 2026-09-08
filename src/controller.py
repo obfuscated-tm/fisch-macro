@@ -47,7 +47,13 @@ class Controller:
         self._hotkey_key = None
         self._hotkey_name = "f6"
         self._last_hotkey_time = 0.0
-        self._hotkey_debounce_seconds = 0.7
+        # Only wide enough to collapse the two paths that see one keypress —
+        # this listener and the GUI's own Tk binding. It used to be 0.7s, which
+        # is long enough to swallow a *deliberate* second press: tapping the
+        # hotkey to start and again half a second later to stop did nothing at
+        # all, and the run only stopped on a third press a second later. A key
+        # release does not auto-repeat, so there is nothing else to debounce.
+        self._hotkey_debounce_seconds = 0.2
         self.logger = logging.getLogger("controller")
 
     def setup_killswitch(self, key_name: str = "f6") -> None:
@@ -180,13 +186,13 @@ class Controller:
         self._killed.set()
         self._running.clear()
 
-        # Ensure the mouse is released
-        if self._mouse_held:
-            try:
-                pyautogui.mouseUp()
-            except Exception:
-                pass
-            self._mouse_held = False
+        # Ensure the mouse is released. Unconditional: this is the path that
+        # must never leave the button down, so it does not trust tracked state.
+        try:
+            pyautogui.mouseUp()
+        except Exception:
+            pass
+        self._mouse_held = False
 
         # Invoke all registered kill callbacks
         for callback in self._kill_callbacks:
@@ -257,12 +263,16 @@ class Controller:
             self._mouse_held = True
             self.logger.debug("Mouse held down.")
 
-    def mouse_release(self) -> None:
+    def mouse_release(self, force: bool = False) -> None:
         """Release the left mouse button.
 
-        Always attempts to release, regardless of killswitch state,
-        to ensure the mouse is never stuck held.
+        Idempotent: the reel controller reasserts its command every tick, so
+        without this guard a released bar would issue a mouseUp event 50 times
+        a second. Pass ``force=True`` on shutdown paths, where the button must
+        come up even if the tracked state disagrees with reality.
         """
+        if not self._mouse_held and not force:
+            return
         try:
             pyautogui.mouseUp()
         except Exception:

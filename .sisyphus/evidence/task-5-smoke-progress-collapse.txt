@@ -1,2 +1,0 @@
-PASS: progress collapse completes catch.
-state=MacroState.COMPLETE

@@ -1,2 +1,0 @@
-PASS: bar-gone with high peak progress completes catch.
-state=MacroState.COMPLETE

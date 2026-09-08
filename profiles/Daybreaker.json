@@ -1,5 +1,5 @@
 {
-  "name": "default",
+  "name": "Daybreaker",
   "fish_hsv_low": [
     90,
     60,
@@ -32,26 +32,26 @@
   ],
   "off_target_hsv_low": [
     0,
-    39,
+    59,
     30
   ],
   "off_target_hsv_high": [
-    30,
-    179,
-    147
+    27,
+    199,
+    149
   ],
-  "bar_brightness_threshold": 149,
-  "description": "Default profile - works with most standard rods",
+  "bar_brightness_threshold": 69,
+  "description": "Calibration for Daybreaker",
   "bar_roi": {
-    "x_start": 0.29828042328042326,
+    "x_start": 0.296957671957672,
     "x_end": 0.7023809523809523,
-    "y_start": 0.8438914027149321,
-    "y_end": 0.8710407239819005
+    "y_start": 0.8425821064552661,
+    "y_end": 0.869762174405436
   },
   "progress_roi": {
-    "x_start": 0.39021164021164023,
-    "x_end": 0.6097883597883598,
-    "y_start": 0.9026047565118913,
+    "x_start": 0.3888888888888889,
+    "x_end": 0.6091269841269841,
+    "y_start": 0.9014722536806342,
     "y_end": 0.9150622876557192
   },
   "shake_roi": {
