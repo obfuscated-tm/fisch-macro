@@ -35,6 +35,7 @@ class DetectionResult:
     shake_confidence: float = 0.0
     # Mirrors src.detector.DetectionResult; keep these in step with it.
     debug_frame: object | None = None
+    debug_source: object | None = None
     reading: object | None = None
     track_box: tuple[int, int, int, int] | None = None
 

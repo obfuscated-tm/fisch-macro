@@ -26,6 +26,45 @@ from src.track_locator import TrackLocator
 
 
 # ---------------------------------------------------------------------------
+# Live-view overlay palette
+# ---------------------------------------------------------------------------
+
+# One table, used both by get_debug_frame to draw and by the GUI to render the
+# key beside the picture. They used to be written out independently and had
+# drifted: the key called the off-target bracket blue when it is drawn amber,
+# and said nothing at all about the magenta aim marker or the progress strip.
+#
+# Values are BGR, because that is what OpenCV draws in. ``OVERLAY_LEGEND`` is
+# ordered the way the eye meets them: the two things being aligned first, then
+# the aids, then the progress readout.
+OVERLAY_COLORS = {
+    "fish": (0, 0, 255),            # red
+    "fish_predicted": (0, 220, 220),  # yellow, dashed
+    "bar_on": (80, 255, 80),        # green
+    "bar_off": (80, 220, 255),      # amber
+    "bar_aim": (220, 120, 255),     # magenta
+    "progress": (255, 100, 255),    # pink strip
+    "progress_smooth": (255, 255, 255),  # white tick
+}
+
+OVERLAY_LEGEND = (
+    ("fish", "Fish now"),
+    ("fish_predicted", "Fish predicted (dashed)"),
+    ("bar_on", "Bar — on target"),
+    ("bar_off", "Bar — off target"),
+    ("bar_aim", "Where the bar is aimed"),
+    ("progress", "Catch progress"),
+    ("progress_smooth", "Progress (smoothed)"),
+)
+
+
+def legend_hex(key: str) -> str:
+    """An ``#rrggbb`` string for a palette entry, for Tk swatches."""
+    b, g, r = OVERLAY_COLORS[key]
+    return f"#{r:02x}{g:02x}{b:02x}"
+
+
+# ---------------------------------------------------------------------------
 # Data structures
 # ---------------------------------------------------------------------------
 
@@ -43,6 +82,11 @@ class DetectionResult:
     shake_pos: Optional[Tuple[int, int]] = None  # (x, y) screen coords of shake button
     shake_confidence: float = 0.0  # 0–1 match quality for the SHAKE UI pattern
     debug_frame: Optional[np.ndarray] = None     # Annotated frame for GUI
+    # The exact crop that was analysed, kept so the caller can re-render the
+    # overlay once it knows the control telemetry. detect_all cannot: the
+    # predicted-fish line, the aim marker and the smoothed progress are all
+    # decided a layer up, so the frame it renders on its own is missing them.
+    debug_source: Optional[np.ndarray] = None
     reading: Optional["ReelReading"] = None      # Raw structure-based read of the track
     track_box: Optional[Tuple[int, int, int, int]] = None  # Track ROI within the window band
 
@@ -1215,7 +1259,12 @@ class Detector:
             if frame is not None and track_box is not None:
                 x0, y0, x1, y1 = track_box
                 frame = frame[y0:y1, x0:x1]
-            result.debug_frame = self.get_debug_frame(frame, result)
+            result.debug_source = frame
+            # Only rendered here for callers that have no telemetry of their
+            # own (the offline scripts). The macro re-renders from
+            # debug_source once it knows what the controller decided.
+            if self.debug_mode:
+                result.debug_frame = self.get_debug_frame(frame, result)
 
         return result
 
@@ -1229,7 +1278,13 @@ class Detector:
         result: DetectionResult,
         extras: Optional[dict] = None,
     ) -> np.ndarray:
-        """Build an overlaid visualization of the actual captured bar ROI."""
+        """Build an overlaid visualization of the actual captured bar ROI.
+
+        Every colour comes from :data:`OVERLAY_COLORS`, which the GUI also
+        reads to draw the key. Pass ``extras`` (predicted_fish_x, effective_bar,
+        progress_smooth, macro_state) to get the control-loop overlays; without
+        it only what the detector itself measured is drawn.
+        """
         extras = extras or {}
 
         if frame is None or frame.size == 0:
@@ -1258,13 +1313,20 @@ class Detector:
         cv2.rectangle(vis, (0, new_h - prog_h), (w * scale_factor, new_h), (40, 40, 40), -1)
         if result.progress > 0:
             px = _x_px(result.progress)
-            cv2.rectangle(vis, (0, new_h - prog_h), (px, new_h), (255, 100, 255), -1)
+            cv2.rectangle(
+                vis, (0, new_h - prog_h), (px, new_h), OVERLAY_COLORS["progress"], -1
+            )
 
-            # Smooth progress if provided
-            smooth_prog = extras.get("progress_smooth", 0.0)
-            if smooth_prog > 0:
-                spx = _x_px(smooth_prog)
-                cv2.line(vis, (spx, new_h - prog_h), (spx, new_h), (255, 255, 255), 2)
+        # Smoothed progress, drawn whether or not there is any raw fill: at the
+        # moment raw collapses to zero the smoothed value is exactly what the
+        # exit logic is still acting on, so that is when it most needs showing.
+        smooth_prog = extras.get("progress_smooth", 0.0)
+        if smooth_prog and smooth_prog > 0:
+            spx = _x_px(smooth_prog)
+            cv2.line(
+                vis, (spx, new_h - prog_h), (spx, new_h),
+                OVERLAY_COLORS["progress_smooth"], 2,
+            )
 
         # Overlays
         pad_y = 2
@@ -1276,42 +1338,55 @@ class Detector:
             lx = _x_px(result.bar_left)
             rx = _x_px(result.bar_right)
             if lx is not None and rx is not None and rx > lx:
-                bar_color = (80, 255, 80) if result.on_target else (80, 220, 255)
+                bar_color = (
+                    OVERLAY_COLORS["bar_on"] if result.on_target
+                    else OVERLAY_COLORS["bar_off"]
+                )
                 # Thick bracket
                 cv2.line(vis, (lx, pad_y), (rx, pad_y), bar_color, 3)
                 cv2.line(vis, (lx, track_h - pad_y), (rx, track_h - pad_y), bar_color, 3)
                 cv2.line(vis, (lx, pad_y), (lx, track_h - pad_y), bar_color, 2)
                 cv2.line(vis, (rx, pad_y), (rx, track_h - pad_y), bar_color, 2)
 
-        # Effective bar center
+        # Effective bar center — where the controller believes the bar will be
+        # by the time its command lands, which is what it actually aims with.
         effective = extras.get("effective_bar")
         if effective is not None:
             ex = _x_px(effective)
             if ex is not None:
-                cv2.line(vis, (ex, pad_y + 4), (ex, track_h - pad_y - 4), (220, 120, 255), 2)
+                cv2.line(
+                    vis, (ex, pad_y + 4), (ex, track_h - pad_y - 4),
+                    OVERLAY_COLORS["bar_aim"], 2,
+                )
 
         # Predicted fish
         predicted = extras.get("predicted_fish_x")
         if predicted is not None:
             px = _x_px(predicted)
             if px is not None:
-                # Dashed yellow line
                 for y in range(pad_y, track_h - pad_y, 8):
-                    cv2.line(vis, (px, y), (px, min(y + 4, track_h - pad_y)), (0, 220, 220), 2)
+                    cv2.line(
+                        vis, (px, y), (px, min(y + 4, track_h - pad_y)),
+                        OVERLAY_COLORS["fish_predicted"], 2,
+                    )
 
         # Actual fish
         if result.fish_x is not None:
             fx = _x_px(result.fish_x)
             if fx is not None:
-                cv2.line(vis, (fx, pad_y), (fx, track_h - pad_y), (0, 0, 255), 3)
-                cv2.circle(vis, (fx, mid_y), 6, (0, 0, 255), -1)
+                cv2.line(
+                    vis, (fx, pad_y), (fx, track_h - pad_y),
+                    OVERLAY_COLORS["fish"], 3,
+                )
+                cv2.circle(vis, (fx, mid_y), 6, OVERLAY_COLORS["fish"], -1)
                 cv2.circle(vis, (fx, mid_y), 3, (255, 255, 255), -1)
 
         # State text
         state = extras.get("macro_state")
         if state:
             # Add a slight dark background for text readability
-            cv2.rectangle(vis, (4, 4), (160, 28), (0, 0, 0), -1)
+            (tw, _th), _ = cv2.getTextSize(state, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)
+            cv2.rectangle(vis, (4, 4), (12 + tw, 28), (0, 0, 0), -1)
             cv2.putText(vis, state, (8, 22), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
 
         return vis

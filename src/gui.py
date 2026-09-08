@@ -390,13 +390,6 @@ class MacroGUI:
             font=("Helvetica Neue", 12, "bold"),
         ).pack(anchor=tk.W)
 
-        ttk.Label(
-            vision_inner,
-            text="Vision: Red = fish · Dashed = predicted · Green/Blue = bar",
-            style="CardDim.TLabel",
-            font=("Helvetica Neue", 9),
-        ).pack(anchor=tk.W, pady=(0, 6))
-
         self.vision_image_label = tk.Label(
             vision_inner,
             text="Start macro to see detection…",
@@ -406,6 +399,8 @@ class MacroGUI:
             height=4,
         )
         self.vision_image_label.pack(fill=tk.X)
+
+        self._build_vision_key(vision_inner)
 
         self.vision_telemetry = tk.Text(
             vision_inner,
@@ -508,6 +503,44 @@ class MacroGUI:
             font=("Helvetica Neue", 11),
         )
         self.window_status.pack(side=tk.RIGHT)
+
+    def _build_vision_key(self, parent):
+        """Draw the overlay key from the palette the overlay itself uses.
+
+        The key used to be a hand-written sentence and had drifted out of step
+        with the drawing: it called the off-target bracket blue when it is
+        amber, and never mentioned the aim marker or the progress strip at all.
+        Building it from :data:`detector.OVERLAY_LEGEND` means a colour cannot
+        change on one side without changing on the other.
+        """
+        from src.detector import OVERLAY_LEGEND, legend_hex
+
+        key = ttk.Frame(parent, style="Card.TFrame")
+        key.pack(fill=tk.X, pady=(6, 0))
+
+        row = None
+        for index, (name, label) in enumerate(OVERLAY_LEGEND):
+            if index % 2 == 0:
+                row = ttk.Frame(key, style="Card.TFrame")
+                row.pack(fill=tk.X)
+
+            cell = ttk.Frame(row, style="Card.TFrame")
+            cell.pack(side=tk.LEFT, fill=tk.X, expand=True)
+
+            tk.Frame(
+                cell,
+                bg=legend_hex(name),
+                width=12,
+                height=4,
+                highlightthickness=0,
+            ).pack(side=tk.LEFT, padx=(0, 5), pady=3)
+
+            ttk.Label(
+                cell,
+                text=label,
+                style="CardDim.TLabel",
+                font=("Helvetica Neue", 9),
+            ).pack(side=tk.LEFT)
 
     # ─── Settings Tab ─────────────────────────────────────────────
 
@@ -1288,31 +1321,49 @@ class MacroGUI:
             import cv2
             from PIL import Image, ImageTk
 
-            snap = self.engine.get_vision_snapshot()
-            if snap.frame_bgr is None:
-                if self.engine.is_running():
+            running = self.engine.is_running()
+            if not running:
+                # Nothing is looking at the screen, so whatever is on the panel
+                # is from a fight that has already ended. Leaving it up made
+                # the bars look like a live reading of a bar that is not there.
+                if self._vision_photo is not None:
+                    self._vision_photo = None
                     self.vision_image_label.config(
-                        image="",
-                        text="Waiting for reel…",
+                        image="", text="Start macro to see detection…"
                     )
+                    self._set_vision_telemetry("")
                 return
 
-            rgb = cv2.cvtColor(snap.frame_bgr, cv2.COLOR_BGR2RGB)
-            pil = Image.fromarray(rgb)
-            target_w = max(320, self.vision_image_label.winfo_width() or 380)
-            scale = min(1.0, target_w / max(pil.width, 1))
-            target_h = max(1, int(pil.height * scale))
-            if pil.width != target_w or pil.height != target_h:
-                pil = pil.resize((target_w, target_h), Image.Resampling.LANCZOS)
-            self._vision_photo = ImageTk.PhotoImage(pil)
-            self.vision_image_label.config(image=self._vision_photo, text="")
+            snap = self.engine.get_vision_snapshot()
 
-            self.vision_telemetry.config(state=tk.NORMAL)
-            self.vision_telemetry.delete("1.0", tk.END)
-            self.vision_telemetry.insert(tk.END, "\n".join(snap.summary_lines()))
-            self.vision_telemetry.config(state=tk.DISABLED)
+            if snap.frame_bgr is None:
+                self._vision_photo = None
+                self.vision_image_label.config(image="", text="Waiting for the reel ROI…")
+            else:
+                rgb = cv2.cvtColor(snap.frame_bgr, cv2.COLOR_BGR2RGB)
+                pil = Image.fromarray(rgb)
+                target_w = max(320, self.vision_image_label.winfo_width() or 380)
+                scale = min(1.0, target_w / max(pil.width, 1))
+                target_h = max(1, int(pil.height * scale))
+                if pil.width != target_w or pil.height != target_h:
+                    pil = pil.resize((target_w, target_h), Image.Resampling.LANCZOS)
+                self._vision_photo = ImageTk.PhotoImage(pil)
+                self.vision_image_label.config(image=self._vision_photo, text="")
+
+            # Updated even with no frame: while hunting, the numbers are the
+            # only thing there is to see, and holding the previous fight's
+            # telemetry there was actively misleading.
+            self._set_vision_telemetry("\n".join(snap.summary_lines()))
         except Exception as exc:
             logger.debug("Vision panel refresh failed: %s", exc)
+
+    def _set_vision_telemetry(self, text: str) -> None:
+        """Replace the telemetry readout text."""
+        self.vision_telemetry.config(state=tk.NORMAL)
+        self.vision_telemetry.delete("1.0", tk.END)
+        if text:
+            self.vision_telemetry.insert(tk.END, text)
+        self.vision_telemetry.config(state=tk.DISABLED)
 
     def _periodic_update(self):
         """Periodic tasks: update session time, check window status."""

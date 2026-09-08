@@ -633,8 +633,23 @@ class MacroEngine:
         if not settings.show_live_vision:
             return
         geom = self._fish_inside_bar(result.fish_x, result.bar_left, result.bar_right)
+
+        # Show the reel ROI while hunting too. Publishing no frame left the
+        # preview holding the last frame of the previous fight, so the bars on
+        # screen belonged to a fish that had already been landed.
+        frame = None
+        source = getattr(result, "debug_source", None)
+        if source is not None:
+            try:
+                frame = self.detector.get_debug_frame(
+                    source, result, extras={"macro_state": self.state.value}
+                )
+            except Exception as exc:  # pragma: no cover - preview only
+                logger.debug("Hunt preview render failed: %s", exc)
+
         with self._vision_lock:
             self._vision_snapshot = VisionSnapshot(
+                frame_bgr=frame,
                 fish_x=result.fish_x,
                 bar_left=result.bar_left,
                 bar_right=result.bar_right,
@@ -1329,24 +1344,30 @@ class MacroEngine:
         off_state = not on_target
 
         if settings.show_live_vision:
-            # detect_all already rendered the overlay from the frame it actually
-            # analysed. Re-capturing settings.bar_roi here would show a stale
-            # hand-calibrated rectangle rather than the auto-located track, so
-            # the preview and the decisions could disagree.
-            vis = result.debug_frame
-            if vis is None and hasattr(self.detector, "capture_roi"):
-                fallback = self.detector.capture_roi(settings.bar_roi)
-                if fallback is not None:
-                    vis = self.detector.get_debug_frame(
-                        fallback,
-                        result,
-                        extras={
-                            "predicted_fish_x": target_fish_x,
-                            "effective_bar": effective_bar,
-                            "progress_smooth": smooth_progress,
-                            "macro_state": self.state.value,
-                        },
-                    )
+            overlay_extras = {
+                "predicted_fish_x": target_fish_x,
+                "effective_bar": effective_bar,
+                "progress_smooth": smooth_progress,
+                "macro_state": self.state.value,
+            }
+
+            # Re-render from the exact crop detect_all analysed, now that the
+            # control telemetry is known. detect_all renders a copy too, but it
+            # has none of these numbers yet, so the predicted-fish line, the aim
+            # marker, the smoothed-progress tick and the state label were all
+            # promised by the key and never actually drawn.
+            #
+            # Re-capturing settings.bar_roi is only a fallback: it would show a
+            # stale hand-calibrated rectangle rather than the auto-located
+            # track, so the preview and the decisions could disagree.
+            source = result.debug_source
+            if source is None and hasattr(self.detector, "capture_roi"):
+                source = self.detector.capture_roi(settings.bar_roi)
+
+            if source is not None:
+                vis = self.detector.get_debug_frame(source, result, extras=overlay_extras)
+            else:
+                vis = result.debug_frame
 
             if vis is not None:
                 self._publish_vision(
