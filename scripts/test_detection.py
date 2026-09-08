@@ -63,8 +63,16 @@ def roi_box(frame):
 
 
 def progress_box(frame):
-    """Pixel rectangle of the progress bar, from the same calibration."""
-    return roi_to_pixels(find_viewport(frame), PROGRESS_ROI)
+    """Pixel rectangle around the progress bar, from the same calibration.
+
+    Padded vertically exactly as production pads it, so the reader gets to
+    locate the bar's outline rather than trusting the dragged rectangle.
+    """
+    roi = dict(PROGRESS_ROI)
+    height = max(0.004, roi["y_end"] - roi["y_start"])
+    roi["y_start"] = max(0.0, roi["y_start"] - height)
+    roi["y_end"] = min(1.0, roi["y_end"] + height)
+    return roi_to_pixels(find_viewport(frame), roi)
 
 
 def read_progress(frame):

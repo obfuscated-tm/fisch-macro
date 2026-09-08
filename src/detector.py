@@ -21,6 +21,7 @@ from typing import Optional, Tuple
 import cv2
 import numpy as np
 
+from src.config import ROIBounds
 from src.reel_vision import ReelReading, ReelVision
 from src.track_locator import TrackLocator
 
@@ -65,8 +66,38 @@ class Detector:
     # 158 labelled frames of tests/clips/errors.mov: a real bar separates by
     # ~220 grey levels at a separation-to-spread ratio of ~16, an empty ROI by
     # ~47 at ~3.
+    # A real fill boundary is a *step*: the colour changes over a column or
+    # two. These are Lab distances across that step, and how far it must stand
+    # above the profile's ordinary column-to-column variation.
+    PROGRESS_MIN_STEP = 9.0
+    # How far the boundary must stand above the profile's other steps. The 90th
+    # percentile rather than the median, so a profile that is smooth apart from
+    # a few texture edges is judged against those edges and not against its
+    # smooth majority.
+    PROGRESS_MIN_STEP_RATIO = 3.0
+    # And the two sides must be flat: the Lab distance across the boundary over
+    # the scatter within each side, which rejects a wall whose shading happens
+    # to change partway along.
+    PROGRESS_MIN_FLATNESS = 1.0
+    # How much more vivid the fill is than the remainder, as saturation plus
+    # value. This is the colour path's own separation requirement, and it is
+    # placed past the tail of what world texture produces rather than at the
+    # crossover: a wrong progress number is believed by everything downstream,
+    # while a missing one is covered, because the caller holds the last reading
+    # through a gap mid-fight.
+    PROGRESS_MIN_VIVIDNESS = 100.0
+    # The brightness path's requirements, unchanged from when this reader only
+    # had that one. They are kept as their own test rather than folded into the
+    # colour path because saturation and value trade off against each other:
+    # the rods that draw a white bar draw its remainder in a saturated dark
+    # red, so saturation-plus-value collapses a separation of 210 grey levels
+    # down to 70 and threw away the case the reader was already good at.
     PROGRESS_MIN_SEPARATION = 80.0
     PROGRESS_MIN_SEP_RATIO = 4.0
+    PROGRESS_EDGE_MARGIN = 0.015    # ignore this much at each end: the outline
+    PROGRESS_MIN_BAND = 4           # rows; thinner than this is not the bar
+    PROGRESS_MAX_BAND = 16
+    PROGRESS_ROW_TOLERANCE = 2      # columns the bar's rows may disagree by
 
     def __init__(self, config_manager):
         self._config = config_manager
@@ -190,6 +221,25 @@ class Detector:
             "width": max(1, int(eff_w * (xe - xs) * scale)),
             "height": max(1, int(eff_h * (ye - ys) * scale)),
         }
+
+    @staticmethod
+    def padded_progress_roi(roi_bounds):
+        """The progress ROI grown vertically so the bar's outline is in frame.
+
+        :meth:`_progress_rows` finds the bar by that outline, and a rectangle
+        dragged by hand often sits a few pixels off it -- on the sample clips it
+        misses the bar altogether more often than not. Growing the capture by
+        the ROI's own height at each end costs a negligible amount of area and
+        lets the reader correct the calibration from the image instead of
+        depending on it.
+        """
+        height = max(0.004, roi_bounds.y_end - roi_bounds.y_start)
+        return ROIBounds(
+            x_start=roi_bounds.x_start,
+            x_end=roi_bounds.x_end,
+            y_start=max(0.0, roi_bounds.y_start - height),
+            y_end=min(1.0, roi_bounds.y_end + height),
+        )
 
     def capture_roi(self, roi_bounds) -> Optional[np.ndarray]:
         """Capture a region of the screen and return it as a BGR frame.
@@ -675,6 +725,90 @@ class Detector:
 
     # ---- progress bar --------------------------------------------------
 
+    def _progress_step(self, profile: np.ndarray) -> Optional[Tuple[int, float, float]]:
+        """Sharpest colour step along one Lab column profile.
+
+        Returns ``(column, magnitude, rival)`` -- where the profile changes
+        most abruptly, by how much, and how big the profile's other steps get,
+        for comparison. The ends are trimmed first: the bar is drawn with an
+        outline, and its two corners are steps too.
+
+        A light blur precedes the difference because the boundary is
+        antialiased over a column or two, and without it the step is split
+        between them and can lose to noise.
+        """
+        width = len(profile)
+        margin = max(3, int(width * self.PROGRESS_EDGE_MARGIN))
+        core = profile[margin:width - margin]
+        if len(core) < 12:
+            return None
+        smoothed = cv2.GaussianBlur(core.reshape(-1, 1, 3), (1, 5), 0).reshape(-1, 3)
+        steps = np.linalg.norm(np.diff(smoothed, axis=0), axis=1)
+        if steps.size == 0:
+            return None
+        peak = int(np.argmax(steps))
+        return margin + peak + 1, float(steps[peak]), float(np.percentile(steps, 90))
+
+    def _progress_bands(self, frame: np.ndarray) -> list:
+        """Candidate row bands for the progress bar, most promising first.
+
+        The ROI is calibrated by dragging a rectangle once, and a few pixels of
+        error there is normal -- on the sample clips the calibrated rectangle
+        misses the bar outright on five of seven, which is most of why progress
+        went unread. So the bar is found from the image instead.
+
+        What identifies it is that every one of its rows breaks at the *same*
+        column: the fill boundary is vertical. World texture also produces a
+        sharpest step in each row, but at a column that wanders from row to
+        row, and a gradient in the scenery produces one that drifts steadily.
+        Neither survives the requirement that a run of rows agree on it to
+        within a couple of columns.
+
+        Several runs can pass that test, so this returns all of them and lets
+        :meth:`detect_progress` settle it by reading each: the bar is the band
+        that reads as a bar. Ranking alone cannot decide it -- measured on the
+        sample clips, the true band is sometimes the tighter run and sometimes
+        the looser one, and sometimes has the weaker step of the two.
+
+        Brightness deliberately plays no part. An earlier version looked for
+        the bar's outline as two rows brighter than the fill between them,
+        which is true of the rods that draw a dark bar and false of the ones
+        that draw a white one -- there the fill is the brightest thing in the
+        strip, and the test found the scenery instead.
+        """
+        if frame is None or frame.shape[0] < self.PROGRESS_MIN_BAND:
+            return []
+        lab = cv2.cvtColor(frame, cv2.COLOR_BGR2LAB).astype(np.float32)
+        columns = []
+        for y in range(lab.shape[0]):
+            found = self._progress_step(lab[y])
+            columns.append(None if found is None else found[0])
+
+        bands = []
+        start = 0
+        while start < len(columns):
+            if columns[start] is None:
+                start += 1
+                continue
+            lo = hi = columns[start]
+            end = start
+            while end + 1 < len(columns) and columns[end + 1] is not None:
+                nlo = min(lo, columns[end + 1])
+                nhi = max(hi, columns[end + 1])
+                if nhi - nlo > self.PROGRESS_ROW_TOLERANCE:
+                    break
+                lo, hi = nlo, nhi
+                end += 1
+            height = end - start + 1
+            if self.PROGRESS_MIN_BAND <= height <= self.PROGRESS_MAX_BAND:
+                bands.append((height, hi - lo, start, end + 1))
+            # Only maximal runs: a run that starts inside one already found
+            # describes the same band, and trying its prefixes wastes work.
+            start = end + 1
+
+        bands.sort(key=lambda b: (-b[0], b[1]))
+        return [(top, bottom) for _, _, top, bottom in bands]
+
     def detect_progress(self, progress_frame: np.ndarray) -> Optional[float]:
         """Progress-bar fill as 0.0-1.0, or None when there is no bar to read.
 
@@ -685,15 +819,28 @@ class Detector:
         99% progress against it. A confident wrong number is worse than no
         number, because everything downstream believes it.
 
-        So presence is decided first, from structure rather than colour. A real
-        progress bar is two flat regions with one sharp boundary between them --
-        bright fill on the left, dark remainder on the right. Split the column
-        profile at its strongest boundary and the separation across it is ~220
-        grey levels with the two sides internally flat (a separation-to-spread
-        ratio around 16); the same measurement on frames with no minigame gives
-        a separation around 47 and a ratio near 3, and the fill is on the wrong
-        side. The two do not overlap: over 158 labelled frames the test keeps 99
-        of 100 real readings and admits none of 58 empty ones.
+        So the bar is located first, from its outline (:meth:`_progress_rows`),
+        and the fill boundary is then read as a *step* in the colour profile
+        along it. A step, rather than the split that best separates the two
+        halves on brightness, because neither assumption in that phrasing
+        survives contact with the rods:
+
+        * Brightness need not change. Several rods draw the bar as a saturated
+          gradient whose unfilled remainder is the same gradient washed out --
+          the step is in colour, not in grey, and read in grey the bar was
+          simply invisible. Measured over the sample clips the old reader got a
+          number on 68-83% of frames for the two white-bar rods and 5% for
+          every other rod.
+        * The two sides need not be flat. A rainbow fill sweeps yellow to blue
+          across its own length, so the best-separating split lands in the
+          middle of the fill rather than at its end. The boundary is the only
+          place the profile changes *abruptly*, which is what picking the
+          sharpest step finds.
+
+        Presence is then decided from the same measurement: a real boundary is
+        a step that stands well clear of the profile's ordinary variation, with
+        the fill the more vivid side. World texture has no outline to find and
+        no such step.
 
         A completely full or completely empty bar has no boundary to find and so
         reads as absent. That is left to the caller, which knows from the reel
@@ -702,40 +849,105 @@ class Detector:
         """
         if progress_frame is None or progress_frame.size == 0:
             return None
-
-        grey = cv2.cvtColor(progress_frame, cv2.COLOR_BGR2GRAY).astype(np.float64)
-        width = grey.shape[1]
-        if width < 16:
+        if progress_frame.shape[1] < 16:
             return None
 
+        # Every candidate band is read and the most bar-like wins -- not the
+        # first that passes, because the true band is sometimes the marginal
+        # one and a stricter test would then hand the frame to a patch of
+        # scenery that passed more easily. The whole strip is included as a
+        # last resort, for a caller that has already cropped tight to the fill.
+        candidates = self._progress_bands(progress_frame)
+        candidates.append((0, progress_frame.shape[0]))
+
+        best = None
+        best_confidence = 0.0
+        for top, bottom in candidates:
+            read = self._read_progress_band(progress_frame[top:bottom])
+            if read is None:
+                continue
+            fill, confidence = read
+            if confidence > best_confidence:
+                best_confidence, best = confidence, fill
+        return best
+
+    def _read_progress_band(self, strip: np.ndarray) -> Optional[Tuple[float, float]]:
+        """``(fill, confidence)`` for one candidate band, or None if it is not a bar.
+
+        Confidence is how far clear of the presence thresholds the band reads,
+        so that bands can be compared against each other rather than merely
+        accepted or rejected.
+        """
+        if strip is None or strip.size == 0:
+            return None
+
+        lab = cv2.cvtColor(strip, cv2.COLOR_BGR2LAB).astype(np.float32)
         # Median down each column: the fill is uniform vertically, so this
         # rejects the odd overlaid sprite without blurring the boundary.
-        profile = np.median(grey, axis=0)
+        profile = np.median(lab, axis=0)
+        found = self._progress_step(profile)
+        if found is None:
+            return None
+        cut, step, rival = found
 
-        cumulative = np.cumsum(profile)
-        total = cumulative[-1]
-        splits = np.arange(3, width - 3)
-        left_mean = cumulative[splits - 1] / splits
-        right_mean = (total - cumulative[splits - 1]) / (width - splits)
-        separation = np.abs(left_mean - right_mean)
-        best = int(np.argmax(separation))
-        cut = int(splits[best])
-        sep = float(separation[best])
+        if step < self.PROGRESS_MIN_STEP:
+            return None
+        sharpness = step / max(rival, 1e-6)
+        if sharpness < self.PROGRESS_MIN_STEP_RATIO:
+            return None
 
-        left, right = profile[:cut], profile[cut:]
+        # Two flat regions with one boundary between them. Medians on each
+        # side, not means, so a fill that carries a gradient along its own
+        # length is still compared at its typical colour.
+        width = len(profile)
+        margin = max(3, int(width * self.PROGRESS_EDGE_MARGIN))
+        fill, rest = profile[margin:cut], profile[cut:width - margin]
+        if len(fill) < 2 or len(rest) < 2:
+            return None
+        jump = float(np.linalg.norm(np.median(fill, axis=0) - np.median(rest, axis=0)))
         spread = float(np.sqrt(
-            (left.var() * len(left) + right.var() * len(right)) / width
+            (fill.var(axis=0).sum() * len(fill) + rest.var(axis=0).sum() * len(rest))
+            / (len(fill) + len(rest))
         ))
-        if sep < self.PROGRESS_MIN_SEPARATION:
-            return None
-        if sep / max(spread, 1e-6) < self.PROGRESS_MIN_SEP_RATIO:
-            return None
-        if left.mean() <= right.mean():
-            # Fill grows from the left. A dark left against a bright right is
-            # the world, not a progress bar.
+        flatness = jump / max(spread, 1e-6)
+        if flatness < self.PROGRESS_MIN_FLATNESS:
             return None
 
-        return float(np.clip(cut / width, 0.0, 1.0))
+        # Fill grows from the left and is the more vivid side, whether that
+        # means brighter (a white bar on dark) or more saturated (a coloured
+        # bar against its own washed-out remainder). A dull left against a
+        # vivid right is the world, not a progress bar.
+        hsv = cv2.cvtColor(strip, cv2.COLOR_BGR2HSV).astype(np.float32)
+        vivid = np.median(hsv, axis=0)[:, 1:].sum(axis=1)
+        left, right = vivid[margin:cut], vivid[cut:width - margin]
+        contrast = float(left.mean() - right.mean())
+
+        # Two ways to be a bar, because the rods draw two kinds. Either the
+        # fill is much brighter than the remainder -- the white-bar case this
+        # reader has always handled -- or it is much more vivid, which is how a
+        # saturated bar differs from its own washed-out remainder.
+        grey = np.median(
+            cv2.cvtColor(strip, cv2.COLOR_BGR2GRAY), axis=0
+        ).astype(np.float32)
+        bright_fill, bright_rest = grey[margin:cut], grey[cut:width - margin]
+        separation = float(bright_fill.mean() - bright_rest.mean())
+        bright_spread = float(np.sqrt(
+            (bright_fill.var() * len(bright_fill) + bright_rest.var() * len(bright_rest))
+            / (len(bright_fill) + len(bright_rest))
+        ))
+        by_brightness = (
+            separation >= self.PROGRESS_MIN_SEPARATION
+            and separation / max(bright_spread, 1e-6) >= self.PROGRESS_MIN_SEP_RATIO
+        )
+        by_colour = contrast >= self.PROGRESS_MIN_VIVIDNESS
+        if not (by_brightness or by_colour):
+            return None
+
+        confidence = max(
+            separation / self.PROGRESS_MIN_SEPARATION if by_brightness else 0.0,
+            contrast / self.PROGRESS_MIN_VIVIDNESS if by_colour else 0.0,
+        )
+        return float(np.clip(cut / width, 0.0, 1.0)), confidence
 
     # ---- shake button --------------------------------------------------
 
@@ -885,11 +1097,13 @@ class Detector:
 
         if settings.auto_locate_track:
             reading, band_frame, track_box = self.read_reel(settings)
-            progress_frame = self.capture_roi(settings.progress_roi)
+            progress_frame = self.capture_roi(
+                self.padded_progress_roi(settings.progress_roi)
+            )
         else:
             # One grab for both, rather than one each: see capture_pair.
             band_frame, progress_frame = self.capture_pair(
-                settings.bar_roi, settings.progress_roi
+                settings.bar_roi, self.padded_progress_roi(settings.progress_roi)
             )
             track_box = None
             reading = None
