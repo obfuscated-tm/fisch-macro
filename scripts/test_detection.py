@@ -166,7 +166,7 @@ def run_dir(frames_dir: pathlib.Path, out_dir: pathlib.Path, use_settings: bool,
         if box is None:
             rows.append({"frame": path.name, "t": round(t, 4), "bar_left": "",
                          "bar_right": "", "fish_x": "", "on_target": "",
-                         "progress": round(progress, 4), "confidence": 0.0,
+                         "progress": "" if progress is None else round(progress, 4), "confidence": 0.0,
                          "notes": "track not located"})
             continue
 
@@ -190,7 +190,7 @@ def run_dir(frames_dir: pathlib.Path, out_dir: pathlib.Path, use_settings: bool,
             "bar_right": "" if reading.bar_right is None else round(reading.bar_right, 4),
             "fish_x": "" if reading.fish_x is None else round(reading.fish_x, 4),
             "on_target": int(reading.on_target),
-            "progress": round(progress, 4),
+            "progress": "" if progress is None else round(progress, 4),
             "confidence": round(reading.confidence, 3),
             "notes": reading.notes,
         })

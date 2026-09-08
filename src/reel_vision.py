@@ -17,6 +17,12 @@ are separated by *width*, not by colour: the bar is a wide contiguous run of
 columns, the fish is a narrow one. That holds whether the bar renders white
 (on target) or red (off target), and whatever colour the rod tints the fish.
 
+Width alone does not finish the job, because the bar has left/right arrow
+glyphs printed inside it that are narrow too. Those are separated from the fish
+by looking *down* the track rather than along it: the fish indicator is a
+stripe drawn over the whole band, while a glyph covers only the middle of it
+and leaves bar fill above and below.
+
 Consequently:
   • no per-rod HSV calibration is needed for the bar or the fish
   • "on target" is decided geometrically (is the fish between the bar edges),
@@ -97,10 +103,40 @@ class VisionParams:
     bar_min_width_ratio: float = 0.45
     bar_max_width_ratio: float = 1.25
     bar_width_samples: int = 12
+    bar_width_seed_samples: int = 5   # readings to median before the prior starts
 
     # --- fish shape prior (fraction of track width) ---
     fish_max_width_frac: float = 0.07
-    fish_min_distance: float = 12.0   # Lab distance from both background and bar
+    fish_min_distance: float = 12.0   # Lab distance from the candidate's surroundings
+    # The marker is a colour the track does not otherwise contain. This floor is
+    # low because on some rods it is only just so -- see _pick_fish -- and its
+    # job is narrow: to throw out the slivers of plain bar left between the
+    # marker and an arrow glyph, which are bar-coloured to within a few units
+    # yet stand out strongly against the dark things flanking them.
+    fish_palette_distance: float = 8.0
+
+    # --- fish vertical-coverage prior ---
+    # A candidate's colour alone cannot separate the fish marker from the arrow
+    # glyphs printed inside the control bar: both are narrow and both differ
+    # from the bar fill. What separates them is that the marker is a *stripe*
+    # spanning the whole track band -- it is drawn over the track, and on some
+    # rods overflows it top and bottom -- while a glyph is a shape occupying
+    # only the middle of the band, with bar fill above and below it.
+    #
+    # Collapsing each column to its median, as the segmentation does, discards
+    # exactly that difference, which is why colour scoring alone kept latching
+    # onto the arrows. So candidates are additionally measured down the band:
+    # the fraction of rows in which the candidate differs from the columns
+    # beside it. Measured on tests/frames/STRUGGLE-ROD2, where the arrows are
+    # large and high-contrast against a white bar, the marker covers 1.00 of
+    # the band and the arrow glyphs 0.44-0.50.
+    fish_row_min_distance: float = 25.0   # Lab distance for a row to count as covered
+    fish_min_coverage: float = 0.6        # below this the candidate is a glyph
+    # Where to sample "beside the candidate". The gap skips the antialiased
+    # shoulder of the marker itself; the span is a few columns of whatever it
+    # is drawn on -- bar fill, or bare track.
+    fish_reference_gap: int = 3
+    fish_reference_span: int = 5
 
     # --- fish motion gate ---
     # The control bar has left/right arrow glyphs printed inside it. They are
@@ -108,6 +144,10 @@ class VisionParams:
     # alone they look exactly like the fish, and the detector would occasionally
     # jump to one and back. Measured on the sample clips, those false latches
     # landed at bar-relative 0.11-0.12 and 0.87-0.88 — the arrow positions.
+    #
+    # The coverage prior above is what rejects them outright; this gate remains
+    # the cheaper guard against a latch surviving one frame, and against any
+    # other candidate that would imply the fish teleporting.
     #
     # What separates them from the fish is motion: the fish moves continuously,
     # so a candidate implying a jump the fish could not physically make is not
@@ -308,17 +348,23 @@ class ReelVision:
     # -- column signature -----------------------------------------------
 
     @staticmethod
+    def _band_lab(frame: np.ndarray, y0: int, y1: int, x0: int, x1: int) -> np.ndarray:
+        """The track strip in CIE Lab, full height. Shape (rows, width, 3)."""
+        strip = frame[y0:y1, x0:x1]
+        return cv2.cvtColor(strip, cv2.COLOR_BGR2LAB).astype(np.float32)
+
+    @staticmethod
     def _column_lab(frame: np.ndarray, y0: int, y1: int, x0: int, x1: int) -> np.ndarray:
         """Per-column median colour of the track strip, in CIE Lab."""
-        strip = frame[y0:y1, x0:x1]
-        lab = cv2.cvtColor(strip, cv2.COLOR_BGR2LAB).astype(np.float32)
-        return np.median(lab, axis=0)  # (width, 3)
+        return np.median(
+            ReelVision._band_lab(frame, y0, y1, x0, x1), axis=0
+        )  # (width, 3)
 
     # -- candidate selection ---------------------------------------------
 
     # -- segmentation ------------------------------------------------------
 
-    def _segment(self, col_lab: np.ndarray) -> List[Tuple[int, int]]:
+    def _segment(self, col_lab: np.ndarray, split_thin: bool = False) -> List[Tuple[int, int]]:
         """Split the track into runs of uniform colour.
 
         Boundaries are steps in the column colour profile. Using steps rather
@@ -326,20 +372,55 @@ class ReelVision:
         left-to-right gradient — a rainbow, on some rods — which a colour test
         would split into pieces, while a step test ignores it entirely and fires
         only at the bar's actual edges.
+
+        The bar and the fish want different granularity, so they ask for
+        different segmentations. ``split_thin`` resolves a run of strong
+        gradient into the two edges of a thin feature rather than one edge (see
+        below); the fish needs that and the bar is only destabilised by it,
+        since a marker-sized sliver cut out of the bar's interior can turn the
+        bar into two blocks too narrow to recognise.
         """
         if col_lab.shape[0] < 4:
             return [(0, col_lab.shape[0])]
 
-        grad = np.linalg.norm(np.diff(col_lab, axis=0), axis=1)
+        steps = np.diff(col_lab, axis=0)
+        grad = np.linalg.norm(steps, axis=1)
         threshold = max(
             self.p.segment_min_step,
             float(np.percentile(grad, self.p.segment_percentile)) * self.p.segment_step_frac,
         )
 
+        # Which way each step goes, along whichever Lab axis moved most. One
+        # antialiased edge ramps the same way across all its pixels; a thin
+        # marker's two edges ramp opposite ways.
+        dominant = steps[np.arange(steps.shape[0]), np.argmax(np.abs(steps), axis=1)]
+        direction = np.sign(dominant)
+
         # Non-maximum suppression: a single edge spans a few pixels of
         # antialiasing and must not become several boundaries.
+        #
+        # For the fish the bridging is additionally restricted to steps going
+        # the *same* way. The marker is only about five columns wide — narrower
+        # than the bridge — so an unsigned bridge merges its leading and
+        # trailing edges into one run and yields a single cut, erasing the
+        # marker from the segmentation entirely. On tests/frames/STRUGGLE-ROD2
+        # that happened whenever the marker lay inside the bar, which is most of
+        # a fight, and no amount of scoring can recover a candidate that was
+        # never produced.
         cuts: List[int] = []
-        for start_idx, end_idx in _runs_from_mask(grad > threshold, 2):
+        merged: List[Tuple[int, int, float]] = []
+        for start_idx, end_idx in _runs_from_mask(grad > threshold, 0):
+            peak = start_idx + int(np.argmax(grad[start_idx:end_idx]))
+            # The direction is read at the peak, not at the run's first step: a
+            # run often opens with a one-pixel undershoot of the opposite sign,
+            # and judging by that reintroduces the merge this is here to avoid.
+            if merged and start_idx - merged[-1][1] <= self.p.run_merge_gap and (
+                not split_thin or direction[peak] == merged[-1][2]
+            ):
+                merged[-1] = (merged[-1][0], end_idx, merged[-1][2])
+            else:
+                merged.append((start_idx, end_idx, float(direction[peak])))
+        for start_idx, end_idx, _ in merged:
             local = grad[start_idx:end_idx]
             cuts.append(start_idx + int(np.argmax(local)) + 1)
 
@@ -539,6 +620,42 @@ class ReelVision:
                 best = (start_idx, end_idx)
         return best
 
+    def _profile(self, band_lab: np.ndarray, a: int, b: int) -> Tuple[float, float]:
+        """How strongly, and over how much of the band, a segment stands out.
+
+        Returns ``(contrast, coverage)``: the median Lab distance between the
+        segment and the columns immediately beside it, and the fraction of band
+        rows over which that distance is real rather than antialiasing.
+
+        The reference is local on purpose. Scoring the fish against the
+        *background* colour instead, as this used to, fails on any rod that
+        tints the marker with the track's own accent: on
+        tests/frames/STRUGGLE-ROD2 the marker is dark red on a dark red track,
+        so it sat 39 Lab from the background while a neutral-grey arrow glyph
+        sat 98 from it, and the arrow won every frame. Against what each
+        actually lies on -- both are inside the white bar -- the marker is 192
+        away and the glyph 98, which is the right answer.
+        """
+        rows, width = band_lab.shape[0], band_lab.shape[1]
+        if b <= a or rows == 0:
+            return 0.0, 0.0
+
+        candidate = band_lab[:, a:b].mean(axis=1)
+
+        gap, span = self.p.fish_reference_gap, self.p.fish_reference_span
+        left = band_lab[:, max(0, a - gap - span):max(0, a - gap)]
+        right = band_lab[:, min(width, b + gap):min(width, b + gap + span)]
+        sides = [s for s in (left, right) if s.shape[1] > 0]
+        if not sides:
+            return 0.0, 0.0
+        reference = np.median(np.concatenate(sides, axis=1), axis=1)
+
+        per_row = np.linalg.norm(candidate - reference, axis=1)
+        return (
+            float(np.median(per_row)),
+            float((per_row > self.p.fish_row_min_distance).mean()),
+        )
+
     def _pick_fish(
         self,
         segments: Sequence[Tuple[int, int]],
@@ -547,23 +664,34 @@ class ReelVision:
         bar: Optional[Tuple[int, int]],
         track_w: int,
         now: float,
+        band_lab: np.ndarray,
     ) -> Tuple[Optional[float], bool]:
-        """The fish is a narrow segment unlike both the background and the bar.
+        """The fish is a narrow, full-height stripe unlike the columns beside it.
 
         It is found the same way whether it sits on bare track or on top of the
         control bar, and whether it renders lighter than its surroundings (over
-        lava) or darker (the purple marker seen over stone).
+        lava) or darker (the purple marker seen over stone). Two properties do
+        the work, and both are needed: it must be a colour that is neither the
+        track nor the bar, and it must *span the band* rather than sit in the
+        middle of it like a printed glyph.
+
+        Colour alone is not enough, because on some rods the marker is tinted
+        with the track's own accent: on tests/frames/STRUGGLE-ROD2 it is a dark
+        red line on a dark red track, sitting 39 Lab from the background, while
+        the neutral-grey arrow glyphs printed in the bar sit 98 from it. Scored
+        on colour the arrow won essentially every frame, which is what pinned
+        the reported fish to bar-relative 0.10 and 0.90 -- the glyph positions
+        -- for 66% of that clip. The glyphs lose on coverage instead.
         """
         bar_lab = None
         if bar is not None:
             inside = [
-                c for (a, b), c in zip(segments, colours) if a >= bar[0] and b <= bar[1]
+                (b - a, c)
+                for (a, b), c in zip(segments, colours)
+                if a >= bar[0] and b <= bar[1]
             ]
             if inside:
-                widths = [
-                    b - a for (a, b) in segments if a >= bar[0] and b <= bar[1]
-                ]
-                bar_lab = inside[int(np.argmax(widths))]
+                bar_lab = max(inside, key=lambda t: t[0])[1]
 
         # How far the fish could have travelled since it was last seen.
         gate: Optional[Tuple[float, float]] = None
@@ -587,16 +715,11 @@ class ReelVision:
             floor = max(floor, self._fish_strength * self.p.fish_relative_strength)
 
         best = None
-        best_distance = 0.0
+        best_score = 0.0
         best_strength = 0.0
         for (seg_start, seg_end), colour in zip(segments, colours):
             width_frac = (seg_end - seg_start) / track_w
             if width_frac > self.p.fish_max_width_frac:
-                continue
-            distance = float(np.linalg.norm(colour - bg_lab))
-            if bar_lab is not None:
-                distance = min(distance, float(np.linalg.norm(colour - bar_lab)))
-            if distance < floor:
                 continue
 
             centre = ((seg_start + seg_end) / 2.0) / track_w
@@ -606,11 +729,33 @@ class ReelVision:
             if gate is not None and not (gate[0] <= centre <= gate[1]):
                 continue
 
-            score = distance
+            palette = float(np.linalg.norm(colour - bg_lab))
+            if bar_lab is not None:
+                palette = min(palette, float(np.linalg.norm(colour - bar_lab)))
+            if palette < self.p.fish_palette_distance:
+                continue
+
+            distance, coverage = self._profile(band_lab, seg_start, seg_end)
+            if distance < floor:
+                continue
+            # A glyph printed inside the bar leaves the rows above and below it
+            # showing bar fill; the marker, drawn over the whole track, does not.
+            if coverage < self.p.fish_min_coverage:
+                continue
+
+            # Contrast integrated over the candidate's footprint: how much of
+            # it is really there, rather than how bright its strongest column
+            # is. Width belongs in that product because the marker is a drawn
+            # element several columns wide while the things it competes with --
+            # a glyph's stroke, the edge of a 3D object showing through -- are
+            # thinner. It is what separates the two on the frames where
+            # contrast alone is a coin flip: on tests/frames/STRUGGLE-ROD the
+            # marker and the rod model behind the track scored 137.4 and 138.9.
+            score = distance * coverage * width_frac
             if self._last_fish_x is not None:
                 score *= max(0.2, 1.0 - abs(centre - self._last_fish_x) * 2.0)
-            if score > best_distance:
-                best_distance = score
+            if score > best_score:
+                best_score = score
                 best_strength = distance
                 best = centre
 
@@ -674,8 +819,10 @@ class ReelVision:
         if track_w < 16:
             return ReelReading(notes="track span too narrow")
 
-        col_lab = self._column_lab(frame, y0, y1, x0, x1)
+        band_lab = self._band_lab(frame, y0, y1, x0, x1)
+        col_lab = np.median(band_lab, axis=0)
         segments = self._segment(col_lab)
+        fish_segments = self._segment(col_lab, split_thin=True)
         colours = [np.median(col_lab[a:b], axis=0) for a, b in segments]
 
         reading = ReelReading(
@@ -693,7 +840,10 @@ class ReelVision:
         reading.bg_lab = bg_lab
 
         bar = self._pick_bar(segments, colours, bg_lab, track_w)
-        fish_x, inside = self._pick_fish(segments, colours, bg_lab, bar, track_w, now)
+        fish_colours = [np.median(col_lab[a:b], axis=0) for a, b in fish_segments]
+        fish_x, inside = self._pick_fish(
+            fish_segments, fish_colours, bg_lab, bar, track_w, now, band_lab
+        )
 
         if bar is not None:
             reading.bar_left = bar[0] / track_w
@@ -713,7 +863,13 @@ class ReelVision:
         reading.ok = reading.bar_left is not None and reading.fish_x is not None
         reading.confidence = self._confidence(reading, len(segments))
 
-        if reading.ok:
+        # Remembered from any frame the bar was read, not only from a complete
+        # reading: how wide this rod's bar is, and where it was, do not depend
+        # on the fish having been found in the same frame. Gating both on a
+        # complete reading coupled the bar's width prior to the fish detector,
+        # so tightening the fish gate starved the width learner and cost bar
+        # detections on clips whose fish is hard to see.
+        if reading.bar_left is not None:
             self._remember(reading, bg_lab)
         return reading
 
@@ -769,11 +925,20 @@ class ReelVision:
             )
             if trusted:
                 if self._bar_width_prior is None:
-                    self._bar_width_prior = reading.bar_width
+                    # Seeded from a median, not from whichever frame happened to
+                    # be first. Taking the first reading verbatim let one junk
+                    # frame set the prior -- on tests/frames/other-rod-fail a
+                    # pre-minigame frame seeded it at 0.070 against a rod whose
+                    # bar is 0.67, and the EMA then spent the whole fight
+                    # climbing out of it while the prior penalised every correct
+                    # reading on the way.
+                    if len(self._width_samples) >= self.p.bar_width_seed_samples:
+                        self._bar_width_prior = float(np.median(self._width_samples))
                 else:
                     a = self.p.bar_width_memory
                     self._bar_width_prior = (
                         self._bar_width_prior * (1.0 - a) + reading.bar_width * a
                     )
         self._last_bar_center = reading.bar_center
-        self._last_fish_x = reading.fish_x
+        if reading.fish_x is not None:
+            self._last_fish_x = reading.fish_x
