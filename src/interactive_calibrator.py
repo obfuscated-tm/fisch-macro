@@ -1,7 +1,7 @@
 import logging
 import time
 import tkinter as tk
-from tkinter import ttk, messagebox
+from tkinter import messagebox
 import cv2
 import numpy as np
 from PIL import Image, ImageTk
@@ -145,34 +145,34 @@ class InteractiveCalibrator(tk.Toplevel):
         """Build the canvas and the control toolbar."""
         # Canvas
         self.canvas = tk.Canvas(
-            self, 
-            width=self.photo_img.width(), 
-            height=self.photo_img.height(), 
+            self,
+            width=self.photo_img.width(),
+            height=self.photo_img.height(),
             highlightthickness=0,
             cursor="crosshair"
         )
         self.canvas.pack(fill=tk.BOTH, expand=True)
         self._bg_image_id = self.canvas.create_image(0, 0, image=self.photo_img, anchor=tk.NW)
-        
+
         # Control Toolbar
         self.toolbar = tk.Frame(self.canvas, bg=COLORS["bg_card"], bd=2, relief=tk.RAISED)
         self.toolbar.place(relx=0.5, y=20, anchor=tk.N)
-        
+
         # Instruction Label
         self.instruction_label = tk.Label(
-            self.toolbar, 
+            self.toolbar,
             text="Select a tool below to begin calibration.",
             fg=COLORS["text"], bg=COLORS["bg_card"],
             font=("Helvetica Neue", 16, "bold")
         )
         self.instruction_label.pack(side=tk.TOP, pady=(10, 5), padx=20)
-        
+
         btn_frame = tk.Frame(self.toolbar, bg=COLORS["bg_card"])
         btn_frame.pack(side=tk.TOP, pady=(0, 10), padx=10)
-        
+
         # Buttons
         self.buttons = {}
-        
+
         def create_btn(text, mode, color):
             btn = tk.Button(
                 btn_frame, text=text, font=("Helvetica Neue", 12),
@@ -182,14 +182,14 @@ class InteractiveCalibrator(tk.Toplevel):
             btn.pack(side=tk.LEFT, padx=3)
             self.buttons[mode] = btn
             return btn
-            
+
         create_btn("1. Fish Color", "fish_color", COLORS["accent"])
         create_btn("2. On-Target Bar", "on_target_color", COLORS["accent_green"])
         create_btn("3. Off-Target Bar", "off_target_color", COLORS["accent_yellow"])
         create_btn("4. Bar Bounds", "bar_roi", COLORS["accent_blue"])
         create_btn("5. Progress", "progress_roi", COLORS["accent_blue"])
         create_btn("6. Shake", "shake_roi", COLORS["accent_blue"])
-        
+
         tk.Label(btn_frame, text=" | ", bg=COLORS["bg_card"], fg="white").pack(side=tk.LEFT, padx=5)
 
         tk.Button(
@@ -201,12 +201,12 @@ class InteractiveCalibrator(tk.Toplevel):
             btn_frame, text="Save & Close", font=("Helvetica Neue", 12, "bold"),
             bg="#28a745", fg="white", cursor="hand2", command=self._save_and_close
         ).pack(side=tk.LEFT, padx=3)
-        
+
         tk.Button(
             btn_frame, text="Cancel", font=("Helvetica Neue", 12),
             bg="#dc3545", fg="white", cursor="hand2", command=self.destroy
         ).pack(side=tk.LEFT, padx=3)
-        
+
         # Info readout
         self.info_label = tk.Label(
             self.toolbar, text="", fg="#a0aabf", bg=COLORS["bg_card"], font=("Helvetica Neue", 12)
@@ -262,15 +262,15 @@ class InteractiveCalibrator(tk.Toplevel):
 
     def _set_mode(self, mode):
         self.mode = mode
-        
+
         # Reset button styles
         for m, btn in self.buttons.items():
             btn.config(relief=tk.RAISED, font=("Helvetica Neue", 12))
-            
+
         # Highlight active button
         if mode in self.buttons:
             self.buttons[mode].config(relief=tk.SUNKEN, font=("Helvetica Neue", 12, "bold"))
-            
+
         # Update instructions
         if mode == "fish_color":
             self.instruction_label.config(text="1. PICK FISH: Click exactly on the PINK fish icon in the bar.")
@@ -291,20 +291,20 @@ class InteractiveCalibrator(tk.Toplevel):
     def _on_press(self, event):
         if not self.mode:
             return
-            
+
         if self.mode.endswith("_color"):
             # Color picking
             physical_x = int(event.x * self.scale_factor)
             physical_y = int(event.y * self.scale_factor)
-            
+
             # Ensure within bounds
             h, w = self.raw_bgr.shape[:2]
             if 0 <= physical_x < w and 0 <= physical_y < h:
                 bgr = self.raw_bgr[physical_y, physical_x]
                 hsv = cv2.cvtColor(np.uint8([[bgr]]), cv2.COLOR_BGR2HSV)[0][0]
-                
+
                 h_val, s_val, v_val = hsv
-                
+
                 # Dynamic padding based on mode
                 if self.mode == "fish_color":
                     # Pink fish needs specific hue but can be bright
@@ -316,10 +316,10 @@ class InteractiveCalibrator(tk.Toplevel):
                     h_low, h_high = max(0, int(h_val)-25), min(179, int(h_val)+25)
                     s_low, s_high = max(30, int(s_val)-70), min(255, int(s_val)+70)
                     v_low, v_high = max(30, int(v_val)-70), min(255, int(v_val)+70)
-                
+
                 low_arr = [h_low, s_low, v_low]
                 high_arr = [h_high, s_high, v_high]
-                
+
                 if self.mode == "fish_color":
                     self.profile.fish_hsv_low = low_arr
                     self.profile.fish_hsv_high = high_arr
@@ -335,15 +335,15 @@ class InteractiveCalibrator(tk.Toplevel):
                     self.profile.off_target_hsv_low = low_arr
                     self.profile.off_target_hsv_high = high_arr
                     self.info_label.config(text=f"Off-Target Color Saved! HSV: {low_arr} to {high_arr}")
-        
+
         elif self.mode.endswith("_roi"):
             # ROI Drawing
             self.rect_start = (event.x, event.y)
-            
+
             # Clear previous rect for this mode if it exists
             if self.mode in self.drawn_rects:
                 self.canvas.delete(self.drawn_rects[self.mode])
-                
+
             color = "red" if "shake" in self.mode else "green" if "bar" in self.mode else "blue"
             self.current_rect_id = self.canvas.create_rectangle(
                 event.x, event.y, event.x, event.y, outline=color, width=3
@@ -353,7 +353,7 @@ class InteractiveCalibrator(tk.Toplevel):
     def _on_drag(self, event):
         if not self.mode or not self.mode.endswith("_roi") or not self.rect_start:
             return
-            
+
         x0, y0 = self.rect_start
         self.canvas.coords(self.current_rect_id, x0, y0, event.x, event.y)
 
@@ -372,24 +372,24 @@ class InteractiveCalibrator(tk.Toplevel):
     def _handle_release(self, event):
         if not self.mode or not self.mode.endswith("_roi") or not self.rect_start:
             return
-            
+
         x0, y0 = self.rect_start
         x1, y1 = event.x, event.y
-        
+
         # Ensure x0,y0 is top-left and x1,y1 is bottom-right
         rx = min(x0, x1)
         ry = min(y0, y1)
         rw = max(x0, x1) - rx
         rh = max(y0, y1) - ry
-        
+
         self.rect_start = None
-        
+
         if rw < 10 or rh < 10:
             self.info_label.config(text="Drawn region too small. Try again.")
             self.canvas.delete(self.current_rect_id)
             self.drawn_rects.pop(self.mode, None)
             return
-            
+
         # Convert to normalized bounds
         window_bounds = self.window_bounds or self.window_tracker.get_roblox_bounds()
         if not window_bounds:
@@ -397,11 +397,11 @@ class InteractiveCalibrator(tk.Toplevel):
             self.canvas.delete(self.current_rect_id)
             self.drawn_rects.pop(self.mode, None)
             return
-            
+
         # Use calibrator utility to compute normalized bounds
         from src.calibrator import Calibrator
         calibrator = Calibrator(self.engine.detector, self.config)
-        
+
         screen_rect = (
             int(rx + self._logical_monitor_left()),
             int(ry + self._logical_monitor_top()),
@@ -413,7 +413,7 @@ class InteractiveCalibrator(tk.Toplevel):
             raise ValueError("The box must overlap the Roblox window. Draw the box inside the Roblox game area.")
 
         roi = ROIBounds(**norm_bounds)
-        
+
         if self.mode == "bar_roi":
             self.settings.bar_roi = roi
             threshold = self._estimate_active_bar_threshold(rx, ry, rw, rh)
@@ -423,7 +423,7 @@ class InteractiveCalibrator(tk.Toplevel):
             self.settings.shake_roi = roi
         elif self.mode == "progress_roi":
             self.settings.progress_roi = roi
-            
+
         extra = ""
         if self.mode == "bar_roi":
             extra = f", brightness threshold: {self.profile.bar_brightness_threshold}"
@@ -457,7 +457,7 @@ class InteractiveCalibrator(tk.Toplevel):
         self.profile.bar_roi = self.settings.bar_roi
         self.profile.progress_roi = self.settings.progress_roi
         self.profile.shake_roi = self.settings.shake_roi
-        
+
         # New: color profile persistence is already done in _on_press directly to self.profile
         self.config.save_settings(self.settings)
         self.config.save_profile(self.profile)

@@ -9,11 +9,9 @@ Provides a compact, always-on-top window with:
 """
 
 import logging
-import threading
 import time
 import tkinter as tk
 from tkinter import ttk, messagebox, simpledialog
-from typing import Optional
 
 logger = logging.getLogger("gui")
 
@@ -665,16 +663,16 @@ class MacroGUI:
 
         # ── Hotkey Section ──
         self._add_section_header(content, "Hotkey")
-        
+
         ks_frame = ttk.Frame(content, style="Settings.TFrame")
         ks_frame.pack(fill=tk.X, padx=12, pady=4)
-        
+
         ttk.Label(ks_frame, text="Start/Stop Key:", style="Settings.TLabel").pack(side=tk.LEFT)
         self.killswitch_label = ttk.Label(
             ks_frame, text=self.settings.killswitch_key.upper(), style="SettingsStat.TLabel"
         )
         self.killswitch_label.pack(side=tk.LEFT, padx=10)
-        
+
         rebind_btn = tk.Button(
             ks_frame, text="Rebind", font=("Helvetica Neue", 12),
             bg=COLORS["accent"], fg="white", cursor="hand2",
@@ -1310,7 +1308,7 @@ class MacroGUI:
             minutes = int((duration % 3600) // 60)
             seconds = int(duration % 60)
             self.session_time.config(text=f"{hours:02d}:{minutes:02d}:{seconds:02d}")
-            
+
             hint = getattr(self.engine, "status_hint", "") or ""
             if self.engine.state.value == "Reeling":
                 if self.engine.last_on_target:

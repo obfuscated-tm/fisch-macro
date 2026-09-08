@@ -14,7 +14,7 @@ between the lowest such edge near the top and the highest one near the bottom.
 
 from __future__ import annotations
 
-from typing import Optional, Tuple
+from typing import Tuple
 
 import cv2
 import numpy as np

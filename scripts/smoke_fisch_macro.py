@@ -470,17 +470,7 @@ def scenario_bar_gone_catch_with_peak() -> None:
 
 def scenario_bar_velocity_compensation() -> None:
     """Test that bar velocity creates appropriate compensation bias."""
-    # Base detection result
-    base = DetectionResult(
-        bar_active=True,
-        bite_confirmed=True,
-        fish_x=0.50,  # Fish centered
-        bar_left=0.40,
-        bar_right=0.60,
-        on_target=True,
-        progress=0.50,
-    )
-    
+
     # Test case 1: Bar moving left (negative velocity) should bias toward hold
     # We simulate this by having changing bar positions over time
     moving_left_results = []
@@ -499,27 +489,27 @@ def scenario_bar_velocity_compensation() -> None:
             on_target=True,
             progress=0.50,
         ))
-    
+
     engine, controller, settings = make_engine(moving_left_results)
     engine._reeling_start_time = time.time() - 3.0  # Past guard window
-    
+
     # Execute the reeling logic multiple times
     for _ in range(len(moving_left_results)):
         engine._do_reeling(settings)
-    
+
     # With bar moving left, we expect a bias toward holding (positive pd_score)
     # This should result in more hold actions than release actions
     hold_count = controller.actions.count("hold")
     release_count = controller.actions.count("release")
-    
+
     # At minimum, we should not see more releases than holds due to leftward bias
     assert hold_count >= release_count, f"Expected hold bias for left-moving bar, got holds={hold_count}, releases={release_count}"
-    
+
     write_evidence(
         "task-5-smoke-bar-velocity-compensation.txt",
         ["PASS: Bar velocity compensation creates appropriate bias for left-moving bar.", f"actions={controller.actions}, holds={hold_count}, releases={release_count}"],
     )
-    
+
     # Test case 2: Bar moving right (positive velocity) should bias toward release
     controller.actions.clear()  # Reset actions
     moving_right_results = []
@@ -538,22 +528,22 @@ def scenario_bar_velocity_compensation() -> None:
             on_target=True,
             progress=0.50,
         ))
-    
+
     engine, controller, settings = make_engine(moving_right_results)
     engine._reeling_start_time = time.time() - 3.0  # Past guard window
-    
+
     # Execute the reeling logic multiple times
     for _ in range(len(moving_right_results)):
         engine._do_reeling(settings)
-    
+
     # With bar moving right, we expect a bias toward releasing (negative pd_score)
     # This should result in more release actions than hold actions
     hold_count = controller.actions.count("hold")
     release_count = controller.actions.count("release")
-    
+
     # At minimum, we should not see more holds than releases due to rightward bias
     assert release_count >= hold_count, f"Expected release bias for right-moving bar, got holds={hold_count}, releases={release_count}"
-    
+
     write_evidence(
         "task-5-smoke-bar-velocity-compensation.txt",
         ["PASS: Bar velocity compensation creates appropriate bias for left-moving bar.", f"actions={controller.actions}, holds={hold_count}, releases={release_count}",

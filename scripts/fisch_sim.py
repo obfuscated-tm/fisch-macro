@@ -15,7 +15,7 @@ the wrong plant is tuned to the wrong problem.
 from __future__ import annotations
 
 import random
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 # --- bar physics ------------------------------------------------------------
 # Measured by scripts/measure_physics.py from tests/clips/physics-*.mov. The

@@ -14,7 +14,6 @@ before analysis.
 """
 
 import logging
-import time
 from dataclasses import dataclass
 from typing import Optional, Tuple
 
@@ -453,7 +452,7 @@ class Detector:
             return False
 
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        
+
         # Look for the characteristic horizontal lines of the bar track
         # Use stricter thresholds (80, 200) to reject soft edges from transparent backgrounds
         edges = cv2.Canny(gray, 80, 200)
@@ -486,7 +485,7 @@ class Detector:
 
         profile = self._config.get_active_profile()
         hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
-        
+
         # Use a more targeted VFX filter for the fish to avoid losing it
         # The fish icon is usually saturated, so we avoid stripping high-saturation pixels.
         vfx_ok = self._filter_vfx(hsv)
@@ -496,11 +495,11 @@ class Detector:
             np.array(profile.fish_hsv_low, dtype=np.uint8),
             np.array(profile.fish_hsv_high, dtype=np.uint8),
         )
-        
+
         # Combine with VFX mask, but be lenient
         mask = cv2.bitwise_and(color_mask, vfx_ok)
-        
-        # If the combined mask is too empty, fall back to just the color mask 
+
+        # If the combined mask is too empty, fall back to just the color mask
         # (in case VFX filter is too aggressive for the fish icon)
         if cv2.countNonZero(mask) < 10:
             mask = color_mask
@@ -555,48 +554,48 @@ class Detector:
             np.array(profile.off_target_hsv_low, dtype=np.uint8),
             np.array(profile.off_target_hsv_high, dtype=np.uint8),
         )
-        
+
         # 2. Smart Background Exclusion
-        # If the off_target color is low-saturation (grayish), we need to ensure 
+        # If the off_target color is low-saturation (grayish), we need to ensure
         # we aren't just picking up the background track.
         s_channel = hsv[:, :, 1]
         v_channel = hsv[:, :, 2]
-        
-        # Typical background track is dull. The bar (even if gray) usually has 
+
+        # Typical background track is dull. The bar (even if gray) usually has
         # higher 'V' (brightness) or a slight saturation pop.
         track_mask = ((s_channel < 30) & (v_channel < 100)).astype(np.uint8) * 255
         off_mask = cv2.bitwise_and(off_mask, cv2.bitwise_not(track_mask))
-        
+
         combined_mask = cv2.bitwise_or(on_mask, off_mask)
         mask = cv2.bitwise_and(combined_mask, vfx_ok)
 
         # 3. Clean up and scan for horizontal extent
         kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (7, 3))
         mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
-        
+
         w = frame.shape[1]
         col_counts = np.sum(mask > 0, axis=0)
         # Requirement: at least 15% vertical fill to be considered part of the bar
         filled_cols = np.where(col_counts > (frame.shape[0] * 0.15))[0]
-        
+
         if len(filled_cols) > 10:
             # Find the longest contiguous block of filled columns
             diffs = np.diff(filled_cols)
-            breaks = np.where(diffs > 3)[0] 
-            
+            breaks = np.where(diffs > 3)[0]
+
             starts = np.insert(filled_cols[breaks + 1], 0, filled_cols[0])
             ends = np.append(filled_cols[breaks], filled_cols[-1])
-            
+
             lengths = ends - starts
             best_idx = int(np.argmax(lengths))
-            
+
             left = starts[best_idx] / w
             right = ends[best_idx] / w
-            
+
             # Sanity check: the bar should have a reasonable width (e.g., > 5% of track)
             if right - left < 0.02:
                 return self._brightness_fallback(frame)
-                
+
             return (float(np.clip(left, 0.0, 1.0)),
                     float(np.clip(right, 0.0, 1.0)))
 
@@ -705,7 +704,7 @@ class Detector:
             np.array(profile.on_target_hsv_low, dtype=np.uint8),
             np.array(profile.on_target_hsv_high, dtype=np.uint8),
         )
-        
+
         # 2. Check for 'Off Target' color (usually orange/white)
         off_mask = cv2.inRange(
             hsv,
@@ -716,15 +715,15 @@ class Detector:
         on_pixels = cv2.countNonZero(on_mask)
         off_pixels = cv2.countNonZero(off_mask)
         total_pixels = bar_roi.shape[0] * bar_roi.shape[1]
-        
+
         # Robust Gradient Logic:
         # 1. If we see a decent amount of On-Target color (>8% of the bar), we're likely on.
         # 2. If we see both, we check if On-Target is at least half as common as Off-Target.
         on_pct = on_pixels / total_pixels
         off_pct = off_pixels / total_pixels
-        
+
         on_target = (on_pct > 0.08) or (on_pct > 0.02 and on_pct > off_pct * 0.5)
-        
+
         if on_target:
             self.logger.debug("Bar ON TARGET (on: %.1f%%, off: %.1f%%)", on_pct*100, off_pct*100)
         return on_target
@@ -1024,8 +1023,7 @@ class Detector:
 
         candidates: list[tuple[float, int, int]] = []
 
-        # Circle search on desaturated bright edges
-        gray = cv2.cvtColor(shake_frame, cv2.COLOR_BGR2GRAY)
+        # Circle search on the desaturated bright-edge mask
         edges = cv2.Canny(white_mask, 60, 160)
         # The search range has to cover everything _shake_button_score is
         # willing to accept, or a button inside the model's own bounds is never
@@ -1243,7 +1241,7 @@ class Detector:
         scale_factor = max(1, min(4, 800 // max(1, frame.shape[1])))
         h, w = frame.shape[:2]
         vis = cv2.resize(frame, (w * scale_factor, h * scale_factor), interpolation=cv2.INTER_NEAREST)
-        
+
         # Dim the image slightly so overlays pop
         vis = (vis * 0.6).astype(np.uint8)
 
@@ -1251,7 +1249,7 @@ class Detector:
         prog_h = 12
         vis = np.pad(vis, ((0, prog_h + 4), (0, 0), (0, 0)), mode='constant', constant_values=20)
         new_h = vis.shape[0]
-        
+
         def _x_px(value: Optional[float]) -> Optional[int]:
             if value is None: return None
             return int(float(np.clip(value, 0.0, 1.0)) * (w * scale_factor))
@@ -1261,7 +1259,7 @@ class Detector:
         if result.progress > 0:
             px = _x_px(result.progress)
             cv2.rectangle(vis, (0, new_h - prog_h), (px, new_h), (255, 100, 255), -1)
-            
+
             # Smooth progress if provided
             smooth_prog = extras.get("progress_smooth", 0.0)
             if smooth_prog > 0:

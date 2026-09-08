@@ -29,7 +29,6 @@ import pathlib
 import sys
 
 import cv2
-import numpy as np
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 # Both roots: this script imports modules bare (``reel_vision``), while

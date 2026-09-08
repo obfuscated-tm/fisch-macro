@@ -344,8 +344,8 @@ class MacroEngine:
                     self._do_complete(settings)
                 else:
                     time.sleep(interval)
-                
-                # If we are reeling, we want maximum responsiveness, 
+
+                # If we are reeling, we want maximum responsiveness,
                 # so we skip the extra sleep and rely on the scan_interval in the next loop.
                 # For other states, a small sleep is fine.
                 if self.state != MacroState.REELING:
@@ -1037,7 +1037,6 @@ class MacroEngine:
         success_confirm_frames = settings.success_confirm_frames
         fail_confirm_frames = settings.fail_confirm_frames
         bar_gone_confirm_frames = settings.bar_gone_confirm_frames
-        finish_progress_threshold = settings.finish_progress_threshold
         max_progress_jump = settings.max_progress_jump
         progress_finish_reset_frames = settings.progress_finish_reset_frames
         elapsed = time.time() - self._reeling_start_time

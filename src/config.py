@@ -9,7 +9,7 @@ import json
 import logging
 import os
 from dataclasses import dataclass, field, asdict, fields
-from typing import List, Tuple, Optional
+from typing import List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -41,13 +41,13 @@ class ColorProfile:
     fish_hsv_high: List[int] = field(default_factory=lambda: [170, 255, 255])
     bar_hsv_low: List[int] = field(default_factory=lambda: [40, 80, 100])
     bar_hsv_high: List[int] = field(default_factory=lambda: [90, 255, 255])
-    
+
     # New: Targeted color feedback for smarter behavior
     on_target_hsv_low: List[int] = field(default_factory=lambda: [40, 80, 100])   # Usually green
     on_target_hsv_high: List[int] = field(default_factory=lambda: [90, 255, 255])
     off_target_hsv_low: List[int] = field(default_factory=lambda: [15, 80, 100])  # Usually orange/white
     off_target_hsv_high: List[int] = field(default_factory=lambda: [35, 255, 255])
-    
+
     bar_brightness_threshold: int = 80
     description: str = ""
     bar_roi: Optional[ROIBounds] = None

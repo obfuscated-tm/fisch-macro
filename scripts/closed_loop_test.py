@@ -102,7 +102,6 @@ def main() -> int:
         bar_trace, fish_trace = [], []
         bar_err = []
         fish_err = []
-        rng = random.Random(seed)
         t = 0.0
 
         for i in range(args.ticks):

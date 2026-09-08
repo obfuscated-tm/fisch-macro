@@ -31,8 +31,8 @@ letting go and recasting than spending another half minute on it.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import Deque, List, Optional
+from dataclasses import dataclass
+from typing import Deque, List, Optional, Tuple
 from collections import deque
 
 from src import fisch_physics as phys

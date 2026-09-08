@@ -86,7 +86,7 @@ def main():
         # Start the GUI
         logger.info("Starting GUI...")
         app = MacroGUI(macro_engine, config_manager, window_tracker)
-        
+
         # This blocks until the window is closed
         app.run()
 
