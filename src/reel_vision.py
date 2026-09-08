@@ -105,6 +105,22 @@ class VisionParams:
     bar_width_samples: int = 12
     bar_width_seed_samples: int = 5   # readings to median before the prior starts
 
+    # A rod's bar is not a fixed size. Some change at random during a fight,
+    # and Castbound's shrinks once the catch stops being perfect — measured on
+    # tests/clips/hallucinate.mov it halves, 0.67 of the track down to 0.35.
+    # A width settled in the first second and never revisited therefore ends up
+    # fighting the game: it refuses the real bar for being too narrow, or cuts
+    # a grown one back down to the size it used to be. On
+    # tests/frames/other-rod-fail the established width is 0.672 while the
+    # median reading is 0.387, which is already within 28% of the floor.
+    #
+    # A real change persists and is self-consistent; a merged reading or a
+    # sliver is erratic and disagrees with itself frame to frame. So readings
+    # the established width refuses are collected, and the width is re-settled
+    # only once a full window of them agrees.
+    width_rechallenge_frames: int = 10
+    width_rechallenge_spread: float = 1.25   # max/min across the window
+
     # --- fish shape prior (fraction of track width) ---
     fish_max_width_frac: float = 0.07
     fish_min_distance: float = 12.0   # Lab distance from the candidate's surroundings
@@ -314,6 +330,9 @@ class ReelVision:
         self._bg_lab: Optional[np.ndarray] = None
         self._width_samples: Deque[float] = deque(maxlen=48)
         self._established_width: Optional[float] = None
+        self._width_challenge: Deque[float] = deque(
+            maxlen=self.p.width_rechallenge_frames
+        )
         self._last_fish_time: Optional[float] = None
         self._fish_reject_streak: int = 0
         self._fish_strength: Optional[float] = None
@@ -625,6 +644,10 @@ class ReelVision:
 
         best = None
         best_score = -1.0
+        # Widths this frame that the established width refuses. Collected and
+        # reduced to one entry per frame, so that a window of them means a
+        # window of *frames* rather than however many blocks one frame split into.
+        refused: List[float] = []
         for start_idx, end_idx in blocks:
             width_frac = (end_idx - start_idx) / track_w
             if not (self.p.bar_min_width_frac <= width_frac <= self.p.bar_max_width_frac):
@@ -634,8 +657,13 @@ class ReelVision:
             # the bar. See bar_min_width_ratio for why the two sides differ.
             if self._established_width is not None:
                 if width_frac < self._established_width * self.p.bar_min_width_ratio:
+                    # Too narrow for the width we settled on — but the bar may
+                    # simply have shrunk, so the refusal is recorded rather
+                    # than merely obeyed. See _challenge_width.
+                    refused.append(width_frac)
                     continue
                 if width_frac > self._established_width * self.p.bar_max_width_ratio:
+                    refused.append(width_frac)
                     # Too wide means the bar has been merged with whatever sits
                     # beside it, so the bar is inside this block rather than
                     # absent. Dropping the frame outright costs ~11% of
@@ -675,7 +703,47 @@ class ReelVision:
             if score > best_score:
                 best_score = score
                 best = (start_idx, end_idx)
+
+        if self._established_width is not None:
+            if refused:
+                # The widest refusal is the one most likely to be the bar: a
+                # bar that has changed size is still the largest structure on
+                # the track, while the things that get refused alongside it are
+                # slivers. A merged reading is wider still, but erratic, and
+                # the consistency test is what throws those out.
+                self._challenge_width(max(refused))
+            elif best is not None:
+                # Nothing disagreed this frame, so the established width still
+                # describes what is on screen.
+                self._width_challenge.clear()
         return best
+
+    def _challenge_width(self, width: float) -> None:
+        """Note a bar-sized block that the established width refuses.
+
+        The width is re-settled only when a full window of refusals agrees with
+        itself, because that is what separates a bar that has genuinely changed
+        size from a reading that merged with its neighbour or collapsed onto a
+        sliver: the first persists and is consistent, the second is erratic.
+
+        Without this the first second of a fight fixes the bar's size for the
+        rest of it. That is wrong in both directions — a rod whose bar grows has
+        the excess cut off, and one whose bar shrinks has the real bar refused
+        for being too narrow, which costs the reading entirely.
+        """
+        self._width_challenge.append(width)
+        if len(self._width_challenge) < self._width_challenge.maxlen:
+            return
+
+        challenges = sorted(self._width_challenge)
+        if challenges[0] <= 0 or challenges[-1] > challenges[0] * self.p.width_rechallenge_spread:
+            return
+
+        settled = float(np.median(challenges))
+        self._established_width = settled
+        self._bar_width_prior = settled
+        self._width_samples.clear()
+        self._width_challenge.clear()
 
     def _outside_lab(
         self, frame: np.ndarray, y0: int, y1: int, x0: int, x1: int
