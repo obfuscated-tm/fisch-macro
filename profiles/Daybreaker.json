@@ -1,0 +1,63 @@
+{
+  "name": "Daybreaker",
+  "fish_hsv_low": [
+    90,
+    60,
+    50
+  ],
+  "fish_hsv_high": [
+    130,
+    122,
+    150
+  ],
+  "bar_hsv_low": [
+    0,
+    30,
+    171
+  ],
+  "bar_hsv_high": [
+    25,
+    70,
+    255
+  ],
+  "on_target_hsv_low": [
+    0,
+    30,
+    171
+  ],
+  "on_target_hsv_high": [
+    25,
+    70,
+    255
+  ],
+  "off_target_hsv_low": [
+    0,
+    59,
+    30
+  ],
+  "off_target_hsv_high": [
+    27,
+    199,
+    149
+  ],
+  "bar_brightness_threshold": 69,
+  "description": "Calibration for Daybreaker",
+  "bar_roi": {
+    "x_start": 0.296957671957672,
+    "x_end": 0.7023809523809523,
+    "y_start": 0.8425821064552661,
+    "y_end": 0.869762174405436
+  },
+  "progress_roi": {
+    "x_start": 0.3888888888888889,
+    "x_end": 0.6091269841269841,
+    "y_start": 0.9014722536806342,
+    "y_end": 0.9150622876557192
+  },
+  "shake_roi": {
+    "x_start": 0.001984126984126984,
+    "x_end": 0.9993386243386243,
+    "y_start": 0.0,
+    "y_end": 0.9886749716874292
+  }
+}

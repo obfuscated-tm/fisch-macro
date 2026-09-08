@@ -5,6 +5,7 @@ Handles loading/saving settings, color profiles, and ROI bounds.
 All configuration is stored as JSON files in the project directory.
 """
 
+import copy
 import json
 import logging
 import os
@@ -244,6 +245,7 @@ class ConfigManager:
         # by detect_all, and again by every ROI computation. Re-reading and
         # re-parsing JSON from disk that often is pure overhead on a loop that
         # is already tight, so the parse is cached and invalidated by mtime.
+        # The cache entry itself is never handed out; see load_settings.
         self._settings_cache: Optional[Settings] = None
         self._settings_stamp: Optional[tuple] = None
         self._warned_unknown: Optional[tuple] = None
@@ -266,6 +268,15 @@ class ConfigManager:
         smaller problem than losing all of them, so partial recovery is the
         right behaviour here — and it says what it dropped.
 
+        Every caller gets its own copy, because several of them keep the
+        object and edit it: the GUI holds one for the lifetime of the window,
+        and the calibration overlay holds another while it is open. Handing
+        out the cached instance made those the *same* object, so edits leaked
+        between them — cancelling the calibrator still left its half-drawn ROI
+        in the GUI's copy, to be written to disk by the next autosave, and a
+        stale holder could write its whole snapshot back over a save someone
+        else had just made. Copying is ~13us against a tick budget of 20ms.
+
         Returns:
             Settings object, falling back to defaults only if the file is
             missing or genuinely unreadable.
@@ -279,7 +290,7 @@ class ConfigManager:
         except OSError:
             stamp = None
         if stamp is not None and stamp == self._settings_stamp:
-            return self._settings_cache
+            return copy.deepcopy(self._settings_cache)
 
         try:
             with open(self.settings_path, "r") as f:
@@ -324,16 +335,27 @@ class ConfigManager:
 
         self._settings_cache = settings
         self._settings_stamp = stamp
-        return settings
+        return copy.deepcopy(settings)
 
     def save_settings(self, settings: Settings) -> None:
         """Save settings to settings.json.
+
+        The cache is primed with what was written rather than left to be
+        invalidated by the next stat, so a reader that arrives before the
+        filesystem timestamp has moved on still sees the new values.
 
         Args:
             settings: The Settings object to persist.
         """
         with open(self.settings_path, "w") as f:
             f.write(json.dumps(asdict(settings), indent=2))
+
+        self._settings_cache = copy.deepcopy(settings)
+        try:
+            stat = os.stat(self.settings_path)
+            self._settings_stamp = (stat.st_mtime_ns, stat.st_size)
+        except OSError:
+            self._settings_stamp = None
 
     def load_profile(self, name: str) -> ColorProfile:
         """Load a color profile by name.

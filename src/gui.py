@@ -139,7 +139,6 @@ class MacroGUI:
             self.scan_interval_var,
             self.auto_recast_var,
             self.shake_enabled_var,
-            self.profile_var,
             self.fish_prediction_ms_var,
             self.prediction_weight_var,
             self.fish_velocity_smoothing_var,
@@ -334,6 +333,13 @@ class MacroGUI:
         self.notebook.add(self.settings_tab, text="  Settings  ")
         self.notebook.add(self.calibration_tab, text="  Calibrate  ")
         self.notebook.add(self.log_tab, text="  Log  ")
+
+        # The calibration readout reflects the ROI-shift sliders on the
+        # Settings tab, so it is re-read on the way in rather than on every
+        # drag event.
+        self.notebook.bind(
+            "<<NotebookTabChanged>>", lambda _e: self._refresh_calibration_view()
+        )
 
     # ─── Control Tab ──────────────────────────────────────────────
 
@@ -771,105 +777,182 @@ class MacroGUI:
     # ─── Calibration Tab ──────────────────────────────────────────
 
     def _build_calibration_tab(self):
-        """Build the calibration panel."""
+        """Build the calibration panel.
+
+        Laid out in the order the job is actually done — pick the rod, mark the
+        regions, read back what was stored, save it — because the previous
+        layout offered two similarly worded save buttons and no way to see what
+        either of them had done.
+        """
         tab = self.calibration_tab
 
-        # Profile selector
-        profile_frame = ttk.Frame(tab, style="Card.TFrame")
-        profile_frame.pack(fill=tk.X, padx=8, pady=8)
+        # Scrollable: the readout is taller than the tab on a small window.
+        canvas = tk.Canvas(tab, bg=COLORS["bg"], highlightthickness=0)
+        scrollbar = ttk.Scrollbar(tab, orient=tk.VERTICAL, command=canvas.yview)
+        content = ttk.Frame(canvas, style="TFrame")
+        content.bind(
+            "<Configure>",
+            lambda _e: canvas.configure(scrollregion=canvas.bbox("all")),
+        )
+        window_id = canvas.create_window((0, 0), window=content, anchor=tk.NW)
+        canvas.bind(
+            "<Configure>",
+            lambda e: canvas.itemconfigure(window_id, width=e.width),
+        )
+        canvas.configure(yscrollcommand=scrollbar.set)
+        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
 
-        pf_inner = ttk.Frame(profile_frame, style="Card.TFrame")
-        pf_inner.pack(fill=tk.X, padx=16, pady=12)
+        # ── Step 1: which rod ──
+        step1 = self._add_card(content, "1  Rod profile")
 
-        ttk.Label(pf_inner, text="🎣 Rod Profile", style="Card.TLabel",
-                  font=("Helvetica Neue", 13, "bold")).pack(anchor=tk.W)
+        ttk.Label(
+            step1,
+            text="One profile per rod, holding that rod's colours and the three\n"
+                 "regions below. Switching rods loads its saved calibration back.",
+            style="CardDim.TLabel",
+            justify=tk.LEFT,
+        ).pack(anchor=tk.W, pady=(2, 8))
 
-        selector_frame = ttk.Frame(pf_inner, style="Card.TFrame")
-        selector_frame.pack(fill=tk.X, pady=(8, 0))
+        selector = ttk.Frame(step1, style="Card.TFrame")
+        selector.pack(fill=tk.X)
 
-        profiles = self.config.list_profiles()
         self.profile_combo = ttk.Combobox(
-            selector_frame,
+            selector,
             textvariable=self.profile_var,
-            values=profiles,
+            values=self.config.list_profiles(),
             state="readonly",
-            width=20,
+            width=16,
         )
         self.profile_combo.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 8))
         self.profile_combo.bind("<<ComboboxSelected>>", self._on_profile_change)
 
-        delete_profile_btn = tk.Button(
-            selector_frame,
+        tk.Button(
+            selector,
+            text="＋ New rod",
+            font=("Helvetica Neue", 11),
+            bg=COLORS["bg_secondary"],
+            fg=COLORS["text"],
+            activebackground=COLORS["border"],
+            activeforeground=COLORS["text"],
+            relief=tk.FLAT,
+            cursor="hand2",
+            command=self._save_calibration_as_profile,
+        ).pack(side=tk.LEFT, padx=(0, 6))
+
+        tk.Button(
+            selector,
             text="🗑",
-            font=("Helvetica Neue", 12),
+            font=("Helvetica Neue", 11),
             bg=COLORS["danger"],
             fg="#ffffff",
             activebackground="#c73a50",
+            activeforeground="#ffffff",
             relief=tk.FLAT,
             cursor="hand2",
             width=3,
             command=self._delete_profile,
-        )
-        delete_profile_btn.pack(side=tk.RIGHT)
+        ).pack(side=tk.LEFT)
 
-        save_as_profile_btn = tk.Button(
-            pf_inner,
-            text="💾  Save Current Calibration As Rod Profile",
-            font=("Helvetica Neue", 12),
-            bg=COLORS["accent_blue"],
-            fg="#ffffff",
-            activebackground="#3aa3d7",
-            relief=tk.FLAT,
-            cursor="hand2",
-            command=self._save_calibration_as_profile,
-        )
-        save_as_profile_btn.pack(fill=tk.X, pady=(10, 0))
+        # ── Step 2: mark the regions ──
+        step2 = self._add_card(content, "2  Mark the regions")
 
-        # HSV Color Preview (informational)
-        hsv_frame = ttk.Frame(tab, style="Card.TFrame")
-        hsv_frame.pack(fill=tk.X, padx=8, pady=4)
-
-        hsv_inner = ttk.Frame(hsv_frame, style="Card.TFrame")
-        hsv_inner.pack(fill=tk.X, padx=16, pady=12)
-
-        ttk.Label(hsv_inner, text="🎨 Color Ranges (HSV)", style="Card.TLabel",
-                  font=("Helvetica Neue", 13, "bold")).pack(anchor=tk.W)
-
-        self.hsv_info_label = ttk.Label(
-            hsv_inner,
-            text="Loading profile colors...",
+        ttk.Label(
+            step2,
+            text="Opens a full-screen snapshot. Click the fish and bar colours,\n"
+                 "then drag a box around each region and press Save & Close.\n"
+                 "Roblox must be windowed with the minigame on screen.",
             style="CardDim.TLabel",
-        )
-        self.hsv_info_label.pack(anchor=tk.W, pady=(4, 0))
-        self._update_hsv_display()
+            justify=tk.LEFT,
+        ).pack(anchor=tk.W, pady=(2, 8))
 
-        # Interactive calibrate button
-        interactive_cal_btn = tk.Button(
-            tab,
-            text="👁️  Interactive Calibration (Eyedropper)",
+        tk.Button(
+            step2,
+            text="👁  Open calibration overlay",
             font=("Helvetica Neue", 12, "bold"),
-            bg="#f5a623",
+            bg=COLORS["accent_yellow"],
             fg="#ffffff",
             activebackground="#f5b853",
+            activeforeground="#ffffff",
             relief=tk.FLAT,
             cursor="hand2",
             command=self._interactive_calibrate,
-        )
-        interactive_cal_btn.pack(fill=tk.X, padx=8, pady=4)
+        ).pack(fill=tk.X)
 
-        # Save calibration
-        save_cal_btn = tk.Button(
-            tab,
-            text="💾  Save Calibration To Selected Rod",
-            font=("Helvetica Neue", 12),
+        # ── Step 3: what the macro will actually use ──
+        step3 = self._add_card(content, "3  Current calibration")
+
+        self.calibration_readout = tk.Text(
+            step3,
+            height=9,
+            bg="#0a0a14",
+            fg="#a8d4ff",
+            font=("Menlo", 10),
+            relief=tk.FLAT,
+            wrap=tk.NONE,
+            padx=8,
+            pady=6,
+            highlightthickness=0,
+        )
+        self.calibration_readout.pack(fill=tk.X, pady=(4, 0))
+        self.calibration_readout.config(state=tk.DISABLED)
+
+        self.calibration_status = ttk.Label(
+            step3,
+            text="",
+            style="Card.TLabel",
+            font=("Helvetica Neue", 11, "bold"),
+            wraplength=330,
+            justify=tk.LEFT,
+        )
+        self.calibration_status.pack(anchor=tk.W, pady=(8, 0))
+
+        buttons = ttk.Frame(step3, style="Card.TFrame")
+        buttons.pack(fill=tk.X, pady=(10, 0))
+
+        self.save_calibration_btn = tk.Button(
+            buttons,
+            text="💾  Save to rod",
+            font=("Helvetica Neue", 12, "bold"),
             bg=COLORS["accent_blue"],
             fg="#ffffff",
             activebackground="#3aa3d7",
+            activeforeground="#ffffff",
             relief=tk.FLAT,
             cursor="hand2",
             command=self._save_calibration,
         )
-        save_cal_btn.pack(fill=tk.X, padx=8, pady=4)
+        self.save_calibration_btn.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 6))
+
+        self.revert_calibration_btn = tk.Button(
+            buttons,
+            text="↩  Revert",
+            font=("Helvetica Neue", 12),
+            bg=COLORS["bg_secondary"],
+            fg=COLORS["text"],
+            activebackground=COLORS["border"],
+            activeforeground=COLORS["text"],
+            relief=tk.FLAT,
+            cursor="hand2",
+            command=self._revert_calibration,
+        )
+        self.revert_calibration_btn.pack(side=tk.LEFT)
+
+        self._refresh_calibration_view()
+
+    def _add_card(self, parent, title):
+        """Add a titled card to a container and return its inner frame."""
+        card = ttk.Frame(parent, style="Card.TFrame")
+        card.pack(fill=tk.X, padx=8, pady=6)
+
+        inner = ttk.Frame(card, style="Card.TFrame")
+        inner.pack(fill=tk.X, padx=14, pady=12)
+
+        ttk.Label(
+            inner, text=title, style="Card.TLabel",
+            font=("Helvetica Neue", 13, "bold"),
+        ).pack(anchor=tk.W)
+        return inner
 
     # ─── Log Tab ──────────────────────────────────────────────────
 
@@ -971,14 +1054,19 @@ class MacroGUI:
         self._toggle_macro()
 
     def _save_settings(self):
-        """Save current settings to disk (triggered by auto-save)."""
+        """Save current settings to disk (triggered by auto-save).
+
+        ``active_profile`` is deliberately not written from here. Switching
+        rods has to be able to ask before discarding unsaved regions, and to
+        put the combobox back if the answer is no; an autosave trace on the
+        same variable committed the switch before the question was asked.
+        """
         try:
             self.settings.cast_hold_time = self.cast_time_var.get()
             self.settings.recast_delay = self.recast_delay_var.get()
             self.settings.scan_interval_ms = int(self.scan_interval_var.get())
             self.settings.auto_recast = self.auto_recast_var.get()
             self.settings.shake_enabled = self.shake_enabled_var.get()
-            self.settings.active_profile = self.profile_var.get()
             self.settings.fish_prediction_ms = self.fish_prediction_ms_var.get()
             self.settings.prediction_weight = self.prediction_weight_var.get()
             self.settings.fish_velocity_smoothing = self.fish_velocity_smoothing_var.get()
@@ -1005,84 +1093,253 @@ class MacroGUI:
         except Exception as e:
             logger.error(f"Auto-save settings failed: {e}")
 
-    def _save_calibration(self):
-        """Save current calibration settings into the selected rod profile."""
+    # ─── Calibration ──────────────────────────────────────────────
+
+    #: Region label, Settings attribute, ColorProfile attribute.
+    CALIBRATION_REGIONS = (
+        ("Reel bar", "bar_roi"),
+        ("Progress", "progress_roi"),
+        ("Shake", "shake_roi"),
+    )
+
+    @staticmethod
+    def _roi_equal(a, b) -> bool:
+        """Compare two ROIBounds, tolerating float round-trips through JSON."""
+        if a is None or b is None:
+            return a is b
+        return all(
+            abs(getattr(a, f) - getattr(b, f)) < 1e-9
+            for f in ("x_start", "x_end", "y_start", "y_end")
+        )
+
+    def _unsaved_regions(self, profile):
+        """Regions where the working calibration differs from the rod's own.
+
+        Returns a list of (label, reason) pairs. ``reason`` is "never saved"
+        when the rod has nothing stored for that region at all, which is what
+        an older profile looks like.
+        """
+        out = []
+        for label, attr in self.CALIBRATION_REGIONS:
+            saved = getattr(profile, attr, None)
+            if saved is None:
+                out.append((label, "never saved"))
+            elif not self._roi_equal(saved, getattr(self.settings, attr)):
+                out.append((label, "changed"))
+        return out
+
+    def _calibration_readout_text(self, profile) -> str:
+        """The numbers the macro will actually use, as displayed text."""
+        lines = []
+        for label, attr in self.CALIBRATION_REGIONS:
+            roi = getattr(self.settings, attr)
+            lines.append(
+                f"{label:<9} x {roi.x_start * 100:5.1f}–{roi.x_end * 100:5.1f}%"
+                f"   y {roi.y_start * 100:5.1f}–{roi.y_end * 100:5.1f}%"
+            )
+
+        shift = ""
+        if self.settings.roi_shift_x or self.settings.roi_shift_y:
+            shift = (
+                f"  (shifted {self.settings.roi_shift_x * 100:+.1f}%, "
+                f"{self.settings.roi_shift_y * 100:+.1f}%)"
+            )
+        if shift:
+            lines.append(f"{'':<9}{shift.strip()}")
+
+        lines.append("")
+        lines.append(
+            f"Fish      H {profile.fish_hsv_low[0]:>3}–{profile.fish_hsv_high[0]:<3}"
+            f" S {profile.fish_hsv_low[1]:>3}–{profile.fish_hsv_high[1]:<3}"
+            f" V {profile.fish_hsv_low[2]:>3}–{profile.fish_hsv_high[2]:<3}"
+        )
+        lines.append(
+            f"Bar       H {profile.bar_hsv_low[0]:>3}–{profile.bar_hsv_high[0]:<3}"
+            f" S {profile.bar_hsv_low[1]:>3}–{profile.bar_hsv_high[1]:<3}"
+            f" V {profile.bar_hsv_low[2]:>3}–{profile.bar_hsv_high[2]:<3}"
+        )
+        lines.append(f"Brightness threshold  {profile.bar_brightness_threshold}")
+        return "\n".join(lines)
+
+    def _refresh_calibration_view(self):
+        """Redraw the calibration readout, status line and button labels.
+
+        This is the whole answer to "did my calibration stick?" — the tab now
+        shows the numbers in use and says plainly whether the selected rod
+        holds them.
+        """
+        if not hasattr(self, "calibration_readout"):
+            return
+
+        name = self.profile_var.get()
         try:
-            self._sync_bar_roi_from_entries()
-            profile = self.config.load_profile(self.profile_var.get())
-            self._store_current_calibration_in_profile(profile, copy_active_colors=False)
+            profile = self.config.load_profile(name)
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.error("Could not load profile %r: %s", name, exc)
+            profile = None
+
+        self.calibration_readout.config(state=tk.NORMAL)
+        self.calibration_readout.delete("1.0", tk.END)
+        if profile is None:
+            self.calibration_readout.insert(tk.END, "No profile loaded.")
+        else:
+            self.calibration_readout.insert(
+                tk.END, self._calibration_readout_text(profile)
+            )
+        self.calibration_readout.config(state=tk.DISABLED)
+
+        self.save_calibration_btn.config(text=f'💾  Save to "{name}"')
+
+        if profile is None:
+            self.calibration_status.config(
+                text="Rod profile could not be read.",
+                foreground=COLORS["danger"],
+            )
+            self.revert_calibration_btn.config(state=tk.DISABLED)
+            return
+
+        pending = self._unsaved_regions(profile)
+        if not pending:
+            self.calibration_status.config(
+                text=f'✓ Saved — rod "{name}" holds this calibration.',
+                foreground=COLORS["accent_green"],
+            )
+            self.revert_calibration_btn.config(state=tk.DISABLED)
+        else:
+            detail = ", ".join(f"{label} ({why})" for label, why in pending)
+            self.calibration_status.config(
+                text=f'● Not saved yet — {detail}.\nSave to "{name}" to keep it.',
+                foreground=COLORS["accent_yellow"],
+            )
+            self.revert_calibration_btn.config(state=tk.NORMAL)
+
+    def _save_calibration(self):
+        """Store the working ROI bounds in the selected rod profile.
+
+        Colours are left alone: the calibration overlay writes those straight
+        into the rod's own file when it closes, so re-copying them here from
+        whatever happens to be active could overwrite one rod's colours with
+        another's.
+        """
+        name = self.profile_var.get()
+        try:
+            profile = self.config.load_profile(name)
+            profile.bar_roi = self.settings.bar_roi
+            profile.progress_roi = self.settings.progress_roi
+            profile.shake_roi = self.settings.shake_roi
+
+            self.settings.active_profile = name
             self.config.save_settings(self.settings)
             self.config.save_profile(profile)
-            self._refresh_roi_fields()
-            self._update_hsv_display()
-            self._append_log(f"Calibration saved to rod profile: {profile.name}")
+            self._refresh_calibration_view()
+            self._append_log(f'Calibration saved to rod "{name}"')
         except Exception as e:
-            messagebox.showerror("Calibration Error", f"Invalid values: {e}")
+            logger.error("Saving calibration failed: %s", e, exc_info=True)
+            messagebox.showerror("Calibration Error", f"Could not save: {e}")
 
-    def _on_profile_change(self, event):
-        """Handle profile selection change by recalling colors and bounds."""
+    def _revert_calibration(self):
+        """Put the selected rod's saved regions back into use."""
+        name = self.profile_var.get()
+        profile = self.config.load_profile(name)
+        if all(
+            getattr(profile, attr, None) is None
+            for _label, attr in self.CALIBRATION_REGIONS
+        ):
+            messagebox.showinfo(
+                "Nothing To Revert To",
+                f'Rod "{name}" has no saved regions yet.\n\n'
+                "Mark them with the calibration overlay, then save.",
+            )
+            return
+
+        self._apply_profile_calibration(profile)
+        self.config.save_settings(self.settings)
+        self._refresh_calibration_view()
+        self._append_log(f'Reverted to the calibration saved in rod "{name}"')
+
+    def _confirm_discard_calibration(self, action: str) -> bool:
+        """Ask before an action that would drop unsaved region changes."""
+        previous = self.settings.active_profile
+        profile = self.config.load_profile(previous)
+        pending = self._unsaved_regions(profile)
+        if not pending:
+            return True
+
+        detail = ", ".join(label for label, _why in pending)
+        return messagebox.askyesno(
+            "Unsaved Calibration",
+            f'Rod "{previous}" does not have your current {detail} region(s).\n\n'
+            f"{action} anyway and lose them?",
+        )
+
+    def _on_profile_change(self, _event):
+        """Load the selected rod's saved regions into use."""
         profile_name = self.profile_var.get()
+        if profile_name == self.settings.active_profile:
+            self._refresh_calibration_view()
+            return
+
+        if not self._confirm_discard_calibration("Switch rod"):
+            self.profile_var.set(self.settings.active_profile)
+            return
+
         profile = self.config.load_profile(profile_name)
         self.settings.active_profile = profile_name
         self._apply_profile_calibration(profile)
         self.config.save_settings(self.settings)
-        self._refresh_roi_fields()
-        self._update_hsv_display()
-        self._append_log(f"Loaded rod profile: {profile_name}")
+        self._refresh_calibration_view()
+        self._append_log(f'Loaded rod profile "{profile_name}"')
 
     def _delete_profile(self):
         """Delete the currently selected profile."""
         name = self.profile_var.get()
         if name == "default":
-            messagebox.showwarning("Cannot Delete", "The 'default' profile cannot be deleted.")
+            messagebox.showwarning(
+                "Cannot Delete", 'The "default" rod profile cannot be deleted.'
+            )
             return
 
-        if not messagebox.askyesno("Delete Profile", f"Are you sure you want to delete the '{name}' profile?"):
+        if not messagebox.askyesno(
+            "Delete Rod Profile",
+            f'Delete the rod profile "{name}"?\n\n'
+            "Its colours and saved regions are removed permanently.",
+        ):
             return
 
-        if self.config.delete_profile(name):
-            self._append_log(f"Deleted rod profile: {name}")
-            # Switch back to default
-            self.profile_var.set("default")
-            self.profile_combo.configure(values=self.config.list_profiles())
-            self._on_profile_change(None)
-        else:
-            messagebox.showerror("Error", f"Could not delete profile '{name}'.")
+        if not self.config.delete_profile(name):
+            messagebox.showerror("Error", f'Could not delete rod profile "{name}".')
+            return
 
-    def _sync_bar_roi_from_entries(self):
-        """No longer used as manual entries were removed."""
-        pass
-
-    def _store_current_calibration_in_profile(self, profile, copy_active_colors=True):
-        """Persist current colors plus all ROI bounds into a rod profile."""
-        if copy_active_colors:
-            active_profile = self.config.get_active_profile()
-            profile.fish_hsv_low = list(active_profile.fish_hsv_low)
-            profile.fish_hsv_high = list(active_profile.fish_hsv_high)
-            profile.bar_hsv_low = list(active_profile.bar_hsv_low)
-            profile.bar_hsv_high = list(active_profile.bar_hsv_high)
-            profile.bar_brightness_threshold = active_profile.bar_brightness_threshold
-        profile.bar_roi = self.settings.bar_roi
-        profile.progress_roi = self.settings.progress_roi
-        profile.shake_roi = self.settings.shake_roi
+        self._append_log(f'Deleted rod profile "{name}"')
+        # The rod is gone, so there is nothing left to lose by switching.
+        self.settings.active_profile = "default"
+        self.profile_var.set("default")
+        self.profile_combo.configure(values=self.config.list_profiles())
+        self._apply_profile_calibration(self.config.load_profile("default"))
+        self.config.save_settings(self.settings)
+        self._refresh_calibration_view()
 
     def _apply_profile_calibration(self, profile):
         """Apply saved ROI bounds from a rod profile if present."""
-        if profile.bar_roi is not None:
-            self.settings.bar_roi = profile.bar_roi
-        if profile.progress_roi is not None:
-            self.settings.progress_roi = profile.progress_roi
-        if profile.shake_roi is not None:
-            self.settings.shake_roi = profile.shake_roi
+        for _label, attr in self.CALIBRATION_REGIONS:
+            saved = getattr(profile, attr, None)
+            if saved is not None:
+                setattr(self.settings, attr, saved)
 
     def _save_calibration_as_profile(self):
-        """Create a named rod profile from the current calibration."""
+        """Create a new rod profile from the current calibration.
+
+        The new rod is a full copy of the active one — every colour field, not
+        a hand-listed subset. The old hand-written copy silently dropped the
+        on-target and off-target colours back to library defaults, so a rod
+        saved this way lost part of its calibration the moment it was created.
+        """
+        import dataclasses
         import re
-        from src.config import ColorProfile
 
         name = simpledialog.askstring(
-            "Save Rod Profile",
-            "Enter the rod name for this calibration:",
+            "New Rod Profile",
+            "Name this rod:",
             initialvalue=self.profile_var.get(),
             parent=self.root,
         )
@@ -1092,24 +1349,32 @@ class MacroGUI:
         safe_name = re.sub(r"[^A-Za-z0-9_. -]+", "", name.strip()).strip()
         safe_name = safe_name.replace("/", "-")
         if not safe_name:
-            messagebox.showwarning("Invalid Name", "Rod profile name cannot be empty.")
+            messagebox.showwarning("Invalid Name", "A rod profile needs a name.")
             return
 
-        self._sync_bar_roi_from_entries()
-        profile = ColorProfile(
+        if safe_name in self.config.list_profiles() and not messagebox.askyesno(
+            "Overwrite Rod Profile",
+            f'A rod profile named "{safe_name}" already exists.\n\nOverwrite it?',
+        ):
+            return
+
+        source = self.config.get_active_profile()
+        profile = dataclasses.replace(
+            source,
             name=safe_name,
             description=f"Calibration for {safe_name}",
+            bar_roi=self.settings.bar_roi,
+            progress_roi=self.settings.progress_roi,
+            shake_roi=self.settings.shake_roi,
         )
-        self._store_current_calibration_in_profile(profile)
         self.config.save_profile(profile)
 
         self.settings.active_profile = safe_name
         self.config.save_settings(self.settings)
         self.profile_var.set(safe_name)
         self.profile_combo.configure(values=self.config.list_profiles())
-        self._refresh_roi_fields()
-        self._update_hsv_display()
-        self._append_log(f"Saved rod profile: {safe_name}")
+        self._refresh_calibration_view()
+        self._append_log(f'Saved rod profile "{safe_name}"')
 
     def _interactive_calibrate(self):
         """Open the screenshot-based eyedropper and ROI calibration window."""
@@ -1157,8 +1422,8 @@ class MacroGUI:
             )
             self.root.wait_window(window)
             self.settings = self.config.load_settings()
-            self._refresh_roi_fields()
-            self._update_hsv_display()
+            self.profile_var.set(self.settings.active_profile)
+            self._refresh_calibration_view()
             self._append_log("Interactive calibration closed")
         except Exception as e:
             logger.error(f"Interactive calibration error: {e}", exc_info=True)
@@ -1204,26 +1469,6 @@ class MacroGUI:
         self.header_killswitch_label.config(text=f"⚡ Toggle: {label}")
         self.killswitch_label.config(text=label)
         self.kill_button.config(text="EMERGENCY STOP")
-
-    def _refresh_roi_fields(self):
-        """No longer used as manual entries were removed."""
-        pass
-
-    def _update_hsv_display(self):
-        """Update the HSV color range display."""
-        try:
-            profile = self.config.get_active_profile()
-            text = (
-                f"Fish: H{profile.fish_hsv_low[0]}-{profile.fish_hsv_high[0]}  "
-                f"S{profile.fish_hsv_low[1]}-{profile.fish_hsv_high[1]}  "
-                f"V{profile.fish_hsv_low[2]}-{profile.fish_hsv_high[2]}\n"
-                f"Bar:   H{profile.bar_hsv_low[0]}-{profile.bar_hsv_high[0]}  "
-                f"S{profile.bar_hsv_low[1]}-{profile.bar_hsv_high[1]}  "
-                f"V{profile.bar_hsv_low[2]}-{profile.bar_hsv_high[2]}"
-            )
-            self.hsv_info_label.config(text=text)
-        except Exception:
-            self.hsv_info_label.config(text="No profile loaded")
 
     # ─── Thread-Safe Callbacks ────────────────────────────────────
 
