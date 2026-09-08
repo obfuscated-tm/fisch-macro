@@ -69,6 +69,12 @@ class Detector:
     # A real fill boundary is a *step*: the colour changes over a column or
     # two. These are Lab distances across that step, and how far it must stand
     # above the profile's ordinary column-to-column variation.
+    # Radii the SHAKE button may have, as a fraction of the frame's short side.
+    # The circle search and the scorer share them so that the two agree on what
+    # is even a candidate.
+    SHAKE_MIN_RADIUS_FRAC = 0.022
+    SHAKE_MAX_RADIUS_FRAC = 0.14
+
     PROGRESS_MIN_STEP = 9.0
     # How far the boundary must stand above the profile's other steps. The 90th
     # percentile rather than the median, so a profile that is smooth apart from
@@ -961,7 +967,7 @@ class Detector:
     ) -> float:
         """Score how closely a circle matches the Fisch SHAKE UI (dark fill + white ring + text)."""
         h, w = v_channel.shape[:2]
-        if radius < 14 or radius > int(min(h, w) * 0.14):
+        if radius < 14 or radius > int(min(h, w) * self.SHAKE_MAX_RADIUS_FRAC):
             return 0.0
 
         yy, xx = np.ogrid[:h, :w]
@@ -1021,8 +1027,12 @@ class Detector:
         # Circle search on desaturated bright edges
         gray = cv2.cvtColor(shake_frame, cv2.COLOR_BGR2GRAY)
         edges = cv2.Canny(white_mask, 60, 160)
-        min_r = max(16, int(min(h, w) * 0.022))
-        max_r = max(min_r + 10, int(min(h, w) * 0.11))
+        # The search range has to cover everything _shake_button_score is
+        # willing to accept, or a button inside the model's own bounds is never
+        # offered to it. These were 0.022-0.11 against a scorer accepting up to
+        # 0.14, so the largest buttons the scorer recognises could not be found.
+        min_r = max(16, int(min(h, w) * self.SHAKE_MIN_RADIUS_FRAC))
+        max_r = max(min_r + 10, int(min(h, w) * self.SHAKE_MAX_RADIUS_FRAC))
         circles = cv2.HoughCircles(
             edges,
             cv2.HOUGH_GRADIENT,

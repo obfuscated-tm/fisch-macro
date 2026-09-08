@@ -11,6 +11,7 @@ Every state checks the killswitch on every iteration.
 import enum
 import logging
 import threading
+from collections import deque
 import time
 from typing import Callable, Optional, List
 
@@ -88,6 +89,12 @@ class MacroEngine:
     to the GUI via callbacks.
     """
 
+    # How much of the track's width the fish or the bar must cover across the
+    # remembered ticks before a complete reading counts as a live minigame.
+    # Small, because the point is only to tell movement from a still picture.
+    STILL_READING_FRAMES = 5
+    STILL_READING_EPSILON = 0.002
+
     def __init__(self, detector, controller, config_manager):
         """
         Args:
@@ -154,6 +161,7 @@ class MacroEngine:
         self._post_catch_clear_count = 0
         self._bite_confirm_count = 0
         self._expecting_bite_until = 0.0
+        self._hunt_readings = deque(maxlen=self.STILL_READING_FRAMES)
         self.status_hint = "Idle"
         self._last_hunt_log_time = 0.0
         self._vision_lock = threading.Lock()
@@ -393,6 +401,7 @@ class MacroEngine:
         )
         if hasattr(self.detector, "reset_session"):
             self.detector.reset_session()
+        self._hunt_readings.clear()
 
         self._last_live_minigame_time = time.time()
         self._near_finish_streak = 0
@@ -449,6 +458,41 @@ class MacroEngine:
             self._post_catch_armed = True
         return self._post_catch_armed
 
+    def _note_hunt_reading(self, result) -> None:
+        """Remember what the reel ROI looked like this tick, while not fighting.
+
+        Used only to tell a live minigame from a still picture of one; see
+        :meth:`_reading_is_frozen`.
+        """
+        if result.fish_x is None or result.bar_left is None:
+            self._hunt_readings.clear()
+            return
+        self._hunt_readings.append((result.fish_x, result.bar_left))
+
+    def _reading_is_moving(self) -> bool:
+        """True when the reel ROI has visibly changed over recent ticks.
+
+        The reeling minigame is never still: the fish is driven continuously
+        and the bar answers it, so consecutive frames always differ. Other
+        screens are still, and some of them look enough like the minigame to
+        pass for it -- the enchant panel draws a horizontal fill bar across the
+        same rows the reel track occupies, and on tests/frames/STRUGGLE-ROD2 it
+        yields a bar *and* a fish on 44% of the frames where no fight is
+        running. Nothing in a single frame separates the two, but a fill bar
+        that has not moved in a tenth of a second is not a fight.
+
+        The cost on a real bite is at most one tick, since the fish is already
+        moving when the minigame appears.
+        """
+        if len(self._hunt_readings) < 2:
+            return False
+        fish = [f for f, _ in self._hunt_readings]
+        bar = [b for _, b in self._hunt_readings]
+        return (
+            max(fish) - min(fish) >= self.STILL_READING_EPSILON
+            or max(bar) - min(bar) >= self.STILL_READING_EPSILON
+        )
+
     def _reeling_trigger_strength(self, result, settings) -> int:
         """Higher = more confident the reeling minigame has started."""
         if self._minigame_ready(result):
@@ -464,6 +508,20 @@ class MacroEngine:
         return 0
 
     def _should_start_reeling(self, result, settings) -> bool:
+        if (
+            self._minigame_ready(result)
+            and not result.bite_confirmed
+            and not self._reading_is_moving()
+        ):
+            # A complete reading is otherwise enough on its own, which is what
+            # makes a still picture of one dangerous. Positive evidence of
+            # movement is required instead of absence of evidence of stillness,
+            # because the fast path fires on the first frame and a stillness
+            # test has nothing to look at yet. Costs one tick on a real bite;
+            # bite_confirmed, which comes from elsewhere, still starts at once.
+            self._bite_confirm_count = 0
+            return False
+
         strength = self._reeling_trigger_strength(result, settings)
         if strength == 0:
             self._bite_confirm_count = 0
@@ -562,6 +620,7 @@ class MacroEngine:
             self._emit_log(f"📡 {self.status_hint}")
 
     def _try_start_reeling(self, result, settings, source: str = "") -> bool:
+        self._note_hunt_reading(result)
         if not self._can_hunt_new_bite(result, settings):
             return False
         if not self._should_start_reeling(result, settings):

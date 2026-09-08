@@ -136,9 +136,21 @@ def scenario_synthetic_shake_detected() -> None:
     from src.config import ConfigManager
     from src.detector import Detector
 
+    # The button Detector._shake_button_score models: a dark disc inside a
+    # thick white annulus, with white text across the middle. This fixture used
+    # to draw a four-pixel outline instead, which the detector accepted back
+    # when it took any bright contour of roughly the right size and has
+    # rejected ever since it started checking the ring -- so the scenario has
+    # been failing, and everything after it in this file never ran.
+    #
+    # NOTE: the proportions here are the detector's model of the Fisch UI, not
+    # a measurement of it; no capture of a real SHAKE prompt exists in
+    # tests/clips to check either against. If the macro ever misses real shake
+    # prompts, this pair is the thing to re-derive from a screenshot.
+    radius = 52
     frame = np.zeros((400, 600, 3), dtype=np.uint8)
-    cv2.circle(frame, (320, 200), 52, (230, 230, 230), 4)
-    cv2.circle(frame, (320, 200), 46, (25, 25, 28), -1)
+    cv2.circle(frame, (320, 200), radius, (230, 230, 230), -1)
+    cv2.circle(frame, (320, 200), int(radius * 0.55), (25, 25, 28), -1)
     cv2.putText(
         frame, "SHAKE", (285, 210), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (240, 240, 240), 2, cv2.LINE_AA
     )
@@ -669,6 +681,60 @@ def scenario_instant_bite_after_cast_release() -> None:
     )
 
 
+def scenario_still_reading_is_not_a_bite() -> None:
+    """A still picture of a bar and a fish must not start a fight.
+
+    The enchant panel draws a horizontal fill bar across the same rows as the
+    reel track, and the vision reads a bar and a fish out of it on 44% of the
+    non-fight frames in tests/frames/STRUGGLE-ROD2. A single frame cannot tell
+    the two apart; a reading that has not changed for several ticks can, since
+    the minigame is never still.
+    """
+    still = DetectionResult(
+        bar_active=True,
+        fish_x=0.50,
+        bar_left=0.35,
+        bar_right=0.65,
+        progress=0.20,
+    )
+    engine, controller, settings = make_engine([still] * 40)
+    engine.state = MacroState.WAITING
+    engine._post_catch_armed = True
+    engine._last_catch_time = 0.0
+
+    for _ in range(20):
+        engine._do_waiting(settings)
+    assert engine.state != MacroState.REELING, "a frozen reading must not start a fight"
+
+    # The same reading, once it starts moving, is a fight.
+    moving = [
+        DetectionResult(
+            bar_active=True,
+            fish_x=0.50 + 0.02 * i,
+            bar_left=0.35,
+            bar_right=0.65,
+            progress=0.20,
+        )
+        for i in range(6)
+    ]
+    engine, controller, settings = make_engine(moving)
+    engine.state = MacroState.WAITING
+    engine._post_catch_armed = True
+    engine._last_catch_time = 0.0
+    engine._do_waiting(settings)
+    assert engine.state != MacroState.REELING, "one frame cannot yet show movement"
+    engine._do_waiting(settings)
+    assert engine.state == MacroState.REELING, "a moving reading starts a fight on the second tick"
+
+    write_evidence(
+        "task-5-smoke-still-reading.txt",
+        [
+            "PASS: still bar+fish refused indefinitely; moving bar+fish starts",
+            "reeling on the second tick (~20ms later at the default interval).",
+        ],
+    )
+
+
 def scenario_bite_confirmed_without_bar_bounds() -> None:
     """Fish + bite_confirmed should start reeling before bar bounds lock in."""
     partial = DetectionResult(
@@ -795,6 +861,7 @@ def main() -> int:
     scenario_progress_collapse_catch()
     scenario_post_catch_gate_then_new_bite()
     scenario_instant_bite_after_cast_release()
+    scenario_still_reading_is_not_a_bite()
     scenario_bite_confirmed_without_bar_bounds()
     scenario_calibration_rejects_black_slide_frame()
     scenario_stationary_no_overpredict()
