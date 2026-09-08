@@ -139,13 +139,14 @@ class MacroGUI:
             self.scan_interval_var,
             self.auto_recast_var,
             self.shake_enabled_var,
-            self.fish_prediction_ms_var,
-            self.prediction_weight_var,
-            self.fish_velocity_smoothing_var,
-            self.bar_velocity_smoothing_var,
-            self.bar_momentum_factor_var,
-            self.control_kp_var,
-            self.control_kd_var,
+            self.duty_kp_var,
+            self.duty_ki_var,
+            self.neutral_duty_var,
+            self.lead_seconds_var,
+            self.stationary_speed_var,
+            self.bar_accel_var,
+            self.latency_var,
+            self.max_brake_var,
             self.reeling_guard_var,
             self.min_catch_seconds_var,
             self.fast_catch_min_seconds_var,
@@ -156,10 +157,7 @@ class MacroGUI:
             self.roi_shift_y_var,
             self.window_inset_top_var,
             self.window_inset_left_var,
-            self.prediction_use_accel_var,
-            self.prediction_arrival_lead_var,
             self.show_live_vision_var,
-            self.off_target_chase_var,
         ]:
             var.trace_add("write", lambda *args: self._save_settings())
 
@@ -608,29 +606,37 @@ class MacroGUI:
         self.shake_enabled_var = tk.BooleanVar(value=self.settings.shake_enabled)
         self._add_toggle(content, "Auto Shake", self.shake_enabled_var)
 
-        # ── Reeling / Prediction ──
-        self._add_section_header(content, "Reeling & Prediction")
+        # ── Reeling ──
+        # These are ReelController's own parameters. The sliders that used to
+        # sit here belonged to the PD controller it replaced and had not been
+        # wired to anything for some time: half of them were read nowhere at
+        # all, and the rest only inside helpers with no callers. Tuning them
+        # did nothing, which is worse than not offering them.
+        self._add_section_header(content, "Reeling & Control")
 
-        self.fish_prediction_ms_var = tk.DoubleVar(value=self.settings.fish_prediction_ms)
-        self._add_slider(content, "Fish Lookahead", self.fish_prediction_ms_var, 0, 200, 10, suffix="ms")
+        self.duty_kp_var = tk.DoubleVar(value=self.settings.control_duty_kp)
+        self._add_slider(content, "Steering Strength", self.duty_kp_var, 2.0, 25.0, 0.5)
 
-        self.prediction_weight_var = tk.DoubleVar(value=self.settings.prediction_weight)
-        self._add_slider(content, "Prediction Blend", self.prediction_weight_var, 0.0, 1.0, 0.05)
+        self.duty_ki_var = tk.DoubleVar(value=self.settings.control_duty_ki)
+        self._add_slider(content, "Steering Trim", self.duty_ki_var, 0.0, 3.0, 0.1)
 
-        self.fish_velocity_smoothing_var = tk.DoubleVar(value=self.settings.fish_velocity_smoothing)
-        self._add_slider(content, "Fish Momentum", self.fish_velocity_smoothing_var, 0.10, 0.90, 0.05)
+        self.neutral_duty_var = tk.DoubleVar(value=self.settings.control_neutral_duty)
+        self._add_slider(content, "Neutral Hold", self.neutral_duty_var, 0.30, 0.70, 0.005)
 
-        self.bar_velocity_smoothing_var = tk.DoubleVar(value=self.settings.bar_velocity_smoothing)
-        self._add_slider(content, "Bar Drift Smoothing", self.bar_velocity_smoothing_var, 0.10, 0.90, 0.05)
+        self.lead_seconds_var = tk.DoubleVar(value=self.settings.control_lead_seconds)
+        self._add_slider(content, "Fish Lookahead", self.lead_seconds_var, 0.0, 0.25, 0.01, suffix="s")
 
-        self.bar_momentum_factor_var = tk.DoubleVar(value=self.settings.bar_momentum_factor)
-        self._add_slider(content, "Bar Momentum", self.bar_momentum_factor_var, 0.0, 1.0, 0.05)
+        self.stationary_speed_var = tk.DoubleVar(value=self.settings.control_stationary_speed)
+        self._add_slider(content, "Stationary Threshold", self.stationary_speed_var, 0.0, 0.20, 0.01)
 
-        self.control_kp_var = tk.DoubleVar(value=self.settings.control_kp)
-        self._add_slider(content, "Control Strength (Kp)", self.control_kp_var, 0.10, 0.60, 0.02)
+        self.bar_accel_var = tk.DoubleVar(value=self.settings.control_bar_accel)
+        self._add_slider(content, "Bar Acceleration", self.bar_accel_var, 0.2, 3.0, 0.05)
 
-        self.control_kd_var = tk.DoubleVar(value=self.settings.control_kd)
-        self._add_slider(content, "Response (Kd)", self.control_kd_var, 0.50, 3.00, 0.10)
+        self.latency_var = tk.DoubleVar(value=self.settings.control_latency_seconds)
+        self._add_slider(content, "Input Latency", self.latency_var, 0.0, 0.20, 0.01, suffix="s")
+
+        self.max_brake_var = tk.DoubleVar(value=self.settings.control_max_brake_distance)
+        self._add_slider(content, "Max Braking Distance", self.max_brake_var, 0.05, 0.60, 0.05)
 
         # ── Catch Detection ──
         self._add_section_header(content, "Catch Detection")
@@ -688,17 +694,8 @@ class MacroGUI:
         self.window_inset_left_var = tk.DoubleVar(value=self.settings.window_inset_left)
         self._add_slider(content, "Window Inset Left", self.window_inset_left_var, 0.0, 0.08, 0.005)
 
-        self.prediction_use_accel_var = tk.BooleanVar(value=self.settings.prediction_use_acceleration)
-        self._add_toggle(content, "Use Acceleration Predict", self.prediction_use_accel_var)
-
-        self.prediction_arrival_lead_var = tk.BooleanVar(value=self.settings.prediction_arrival_lead)
-        self._add_toggle(content, "Arrival Lead (digmacro-style)", self.prediction_arrival_lead_var)
-
         self.show_live_vision_var = tk.BooleanVar(value=self.settings.show_live_vision)
         self._add_toggle(content, "Live Vision Preview", self.show_live_vision_var)
-
-        self.off_target_chase_var = tk.DoubleVar(value=self.settings.off_target_chase_gain)
-        self._add_slider(content, "Off-Target Chase Gain", self.off_target_chase_var, 1.0, 2.0, 0.05)
 
         # ── Hotkey Section ──
         self._add_section_header(content, "Hotkey")
@@ -1067,13 +1064,14 @@ class MacroGUI:
             self.settings.scan_interval_ms = int(self.scan_interval_var.get())
             self.settings.auto_recast = self.auto_recast_var.get()
             self.settings.shake_enabled = self.shake_enabled_var.get()
-            self.settings.fish_prediction_ms = self.fish_prediction_ms_var.get()
-            self.settings.prediction_weight = self.prediction_weight_var.get()
-            self.settings.fish_velocity_smoothing = self.fish_velocity_smoothing_var.get()
-            self.settings.bar_velocity_smoothing = self.bar_velocity_smoothing_var.get()
-            self.settings.bar_momentum_factor = self.bar_momentum_factor_var.get()
-            self.settings.control_kp = self.control_kp_var.get()
-            self.settings.control_kd = self.control_kd_var.get()
+            self.settings.control_duty_kp = self.duty_kp_var.get()
+            self.settings.control_duty_ki = self.duty_ki_var.get()
+            self.settings.control_neutral_duty = self.neutral_duty_var.get()
+            self.settings.control_lead_seconds = self.lead_seconds_var.get()
+            self.settings.control_stationary_speed = self.stationary_speed_var.get()
+            self.settings.control_bar_accel = self.bar_accel_var.get()
+            self.settings.control_latency_seconds = self.latency_var.get()
+            self.settings.control_max_brake_distance = self.max_brake_var.get()
             self.settings.reeling_guard_seconds = self.reeling_guard_var.get()
             self.settings.min_catch_seconds = self.min_catch_seconds_var.get()
             self.settings.fast_catch_min_seconds = self.fast_catch_min_seconds_var.get()
@@ -1084,10 +1082,7 @@ class MacroGUI:
             self.settings.roi_shift_y = self.roi_shift_y_var.get()
             self.settings.window_inset_top = self.window_inset_top_var.get()
             self.settings.window_inset_left = self.window_inset_left_var.get()
-            self.settings.prediction_use_acceleration = self.prediction_use_accel_var.get()
-            self.settings.prediction_arrival_lead = self.prediction_arrival_lead_var.get()
             self.settings.show_live_vision = self.show_live_vision_var.get()
-            self.settings.off_target_chase_gain = self.off_target_chase_var.get()
 
             self.config.save_settings(self.settings)
         except Exception as e:

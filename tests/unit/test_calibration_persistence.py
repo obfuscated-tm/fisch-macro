@@ -76,11 +76,11 @@ def test_mutating_a_loaded_copy_does_not_disturb_the_cache(config):
 
     first = config.load_settings()
     first.bar_roi.x_start = 0.99
-    first.control_kp = 99.0
+    first.control_duty_kp = 99.0
 
     second = config.load_settings()
     assert second.bar_roi.x_start != pytest.approx(0.99)
-    assert second.control_kp != pytest.approx(99.0)
+    assert second.control_duty_kp != pytest.approx(99.0)
 
 
 # --- 2. a new rod profile keeps every colour --------------------------------

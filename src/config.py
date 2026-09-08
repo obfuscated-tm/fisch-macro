@@ -86,13 +86,6 @@ class Settings:
         action_min_dwell_seconds: Minimum seconds between action changes for control stability.
         stable_hysteresis_multiplier: Multiplier for hysteresis deadzone when stable.
         pd_deadband: Deadband for PD controller score to prevent tiny oscillations.
-        fish_prediction_ms: Milliseconds to predict fish position ahead (lookahead).
-        fish_velocity_smoothing: EMA alpha for fish velocity (lower = more momentum lag).
-        bar_velocity_smoothing: EMA alpha for bar velocity (lower = more drift after direction changes).
-        bar_momentum_factor: How much bar drift offsets the target (0–1).
-        prediction_weight: Blend of predicted vs current fish position (0–1).
-        control_kp: Proportional gain for bar control.
-        control_kd: Derivative gain for bar control.
         control_bar_drift_gain: Feed-forward gain compensating bar coasting.
         min_midgame_progress: Progress fill required before a catch can register.
         bar_gone_near_peak_delta: Bar-gone catch requires last progress within this of peak.
@@ -100,13 +93,10 @@ class Settings:
         roi_shift_y: Fine-tune all ROIs vertically (normalized, positive = down).
         window_inset_top: Crop fraction from top of Roblox window for capture alignment.
         window_inset_left: Crop fraction from left of Roblox window for capture alignment.
-        prediction_use_acceleration: Use acceleration term in fish lookahead (digmacro-style).
-        prediction_arrival_lead: Bias control toward predicted arrival when fish is moving.
         near_finish_confirm_frames: Frames at ~full progress to catch even if bar still visible.
         show_live_vision: Show live detection preview on the Control tab.
         progress_smoothing: EMA alpha for progress (lower = smoother, resists gradient spikes).
         max_progress_tick: Max progress increase per frame for trusted peak tracking.
-        off_target_chase_gain: Control gain multiplier when bar is off-target / fish outside bar.
         progress_collapse_min_peak: Raw peak progress required to treat a collapse as fight end.
         progress_collapse_confirm_frames: Consecutive collapse frames before completing catch.
         reel_stall_seconds: Seconds without progress gain before allowing stall-based completion.
@@ -115,8 +105,6 @@ class Settings:
         lost_fight_confirm_frames: Frames of "this fight cannot be won" before abandoning it.
         reel_stall_min_peak: Raw peak required for stall-based completion.
         left_stall_bar_edge: Bar left edge below this triggers left-side recovery hold logic.
-        prediction_stationary_speed: Below this speed (norm/s), prediction blend fades to zero.
-        prediction_recent_window_seconds: Seconds of history used for recent velocity / prediction.
         post_catch_lockout_seconds: Ignore new bites briefly after a catch (lets UI clear).
         post_catch_clear_frames: Consecutive clear frames required before hunting a new bite.
         bite_confirm_frames: Frames to confirm a partial bite (fish without full bar yet).
@@ -166,13 +154,6 @@ class Settings:
     action_min_dwell_seconds: float = 0.08
     stable_hysteresis_multiplier: float = 1.5
     pd_deadband: float = 0.02
-    fish_prediction_ms: float = 80.0
-    fish_velocity_smoothing: float = 0.35
-    bar_velocity_smoothing: float = 0.25
-    bar_momentum_factor: float = 0.55
-    prediction_weight: float = 0.65
-    control_kp: float = 0.28
-    control_kd: float = 1.2
     control_bar_drift_gain: float = 0.06
     min_midgame_progress: float = 0.35
     bar_gone_near_peak_delta: float = 0.12
@@ -180,13 +161,10 @@ class Settings:
     roi_shift_y: float = 0.0
     window_inset_top: float = 0.0
     window_inset_left: float = 0.0
-    prediction_use_acceleration: bool = True
-    prediction_arrival_lead: bool = True
     near_finish_confirm_frames: int = 10
     show_live_vision: bool = True
     progress_smoothing: float = 0.35
     max_progress_tick: float = 0.06
-    off_target_chase_gain: float = 1.45
     progress_collapse_min_peak: float = 0.55
     progress_collapse_confirm_frames: int = 5
     reel_stall_seconds: float = 18.0
@@ -198,8 +176,6 @@ class Settings:
     lost_fight_confirm_frames: int = 30
     reel_stall_min_peak: float = 0.60
     left_stall_bar_edge: float = 0.12
-    prediction_stationary_speed: float = 0.04
-    prediction_recent_window_seconds: float = 0.2
     post_catch_lockout_seconds: float = 1.5
     post_catch_clear_frames: int = 5
     bite_confirm_frames: int = 2
