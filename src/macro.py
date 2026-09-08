@@ -140,6 +140,8 @@ class MacroEngine:
         self._last_action_time = 0.0
         self._last_action_type = None  # 'hold', 'release', 'rapid_click'
         self._last_shake_click_time = 0.0
+        # When the current hunt began, or None outside one. See _hunt_has_stalled.
+        self._hunt_started_at: Optional[float] = None
         self._saw_midgame_progress = False
         self._prev_progress = 0.0
         self._fish_tracker = MovementTracker()
@@ -740,6 +742,9 @@ class MacroEngine:
         x, y = result.shake_pos
         self.controller.mouse_click(int(x), int(y))
         self._last_shake_click_time = now
+        # Progress: the line is in the water and the game is responding, so the
+        # hunt watchdog starts again from here.
+        self._hunt_started_at = now
         self._emit_log("Clicked SHAKE button")
         return True
 
@@ -1021,7 +1026,38 @@ class MacroEngine:
             if self._wait(interval):
                 break
 
+        self._begin_hunt()
         self._set_state(MacroState.WAITING)
+
+    def _begin_hunt(self) -> None:
+        """Start the clock on a hunt, so one that goes nowhere can be noticed."""
+        self._hunt_started_at = time.time()
+
+    def _hunt_has_stalled(self, settings) -> bool:
+        """Has this hunt produced nothing at all for too long?
+
+        A cast that never took leaves the macro waiting for a bite that cannot
+        come: the line is not in the water, so no shake prompt and no minigame
+        will ever appear, and neither hunt state has anything that times out.
+        Left running overnight that is the whole session spent staring at a rod
+        that was never cast, which is how it was reported.
+
+        Only silence counts. Clicking a shake prompt pushes the deadline back,
+        so a slow lure is never interrupted — what expires is a hunt in which
+        nothing has happened since the cast.
+        """
+        timeout = getattr(settings, "hunt_timeout_seconds", 0.0)
+        if timeout <= 0 or self._hunt_started_at is None:
+            return False
+        if time.time() - self._hunt_started_at < timeout:
+            return False
+
+        self._hunt_started_at = None
+        self._emit_log(
+            f"No bite or shake for {timeout:.0f}s — recasting in case the cast was lost"
+        )
+        logger.info("Hunt timed out after %.0fs with no activity; recasting", timeout)
+        return True
 
     def _do_waiting(self, settings):
         """
@@ -1041,7 +1077,11 @@ class MacroEngine:
         if self._try_click_shake(settings, result):
             return
 
-        self._try_start_reeling(result, settings)
+        if self._try_start_reeling(result, settings):
+            return
+
+        if self._hunt_has_stalled(settings):
+            self._set_state(MacroState.CASTING)
 
     def _do_shaking(self, settings):
         """
@@ -1061,6 +1101,9 @@ class MacroEngine:
 
         if self._try_start_reeling(result, settings):
             return
+
+        if self._hunt_has_stalled(settings):
+            self._set_state(MacroState.CASTING)
 
     def _do_reeling(self, settings):
         """

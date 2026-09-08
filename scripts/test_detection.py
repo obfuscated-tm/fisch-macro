@@ -54,9 +54,6 @@ PROGRESS_ROI = _SETTINGS["progress_roi"]
 _PROGRESS_READER = Detector(ConfigManager(str(ROOT)))
 
 
-AUTO = False
-
-
 def roi_box(frame):
     """The calibrated ROI, used directly as the track strip.
 
@@ -179,7 +176,7 @@ def run_dir(frames_dir: pathlib.Path, out_dir: pathlib.Path, use_settings: bool,
         t = frame_index / fps
         progress = read_progress(frame)
 
-        box = locator.update(frame, search_box(frame)) if AUTO else roi_box(frame)
+        box = roi_box(frame) if use_settings else locator.update(frame, search_box(frame))
         if box is None:
             rows.append({"frame": path.name, "t": round(t, 4), "bar_left": "",
                          "bar_right": "", "fish_x": "", "on_target": "",

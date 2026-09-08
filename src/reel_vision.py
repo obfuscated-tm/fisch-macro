@@ -105,6 +105,22 @@ class VisionParams:
     bar_width_samples: int = 12
     bar_width_seed_samples: int = 5   # readings to median before the prior starts
 
+    # A rod's bar is not a fixed size. Some change at random during a fight,
+    # and Castbound's shrinks once the catch stops being perfect — measured on
+    # tests/clips/hallucinate.mov it halves, 0.67 of the track down to 0.35.
+    # A width settled in the first second and never revisited therefore ends up
+    # fighting the game: it refuses the real bar for being too narrow, or cuts
+    # a grown one back down to the size it used to be. On
+    # tests/frames/other-rod-fail the established width is 0.672 while the
+    # median reading is 0.387, which is already within 28% of the floor.
+    #
+    # A real change persists and is self-consistent; a merged reading or a
+    # sliver is erratic and disagrees with itself frame to frame. So readings
+    # the established width refuses are collected, and the width is re-settled
+    # only once a full window of them agrees.
+    width_rechallenge_frames: int = 10
+    width_rechallenge_spread: float = 1.25   # max/min across the window
+
     # --- fish shape prior (fraction of track width) ---
     fish_max_width_frac: float = 0.07
     fish_min_distance: float = 12.0   # Lab distance from the candidate's surroundings
@@ -137,6 +153,37 @@ class VisionParams:
     # is drawn on -- bar fill, or bare track.
     fish_reference_gap: int = 3
     fish_reference_span: int = 5
+
+    # --- fish marker vs. an ornament drawn on the bar ---
+    # Some rods draw a marker at the centre of the control bar: Castbound's is
+    # a magenta diamond. It is narrow, it is a colour the bar itself is not,
+    # and because it is drawn inside the bar it covers the whole band, so it
+    # satisfies every prior above and was picked as the fish in 16% of the
+    # fight frames of tests/clips/hallucinate.mov.
+    #
+    # That reading is worse than no reading. The ornament sits at the bar's
+    # centre by construction, so reporting it as the fish tells the controller
+    # its error is zero at the exact moment it is not: it stops steering, and
+    # the fish swims off while the bar holds still. On screen that is the
+    # macro "going the wrong way" for no visible reason.
+    #
+    # What separates them is where they are drawn. The fish marker belongs to
+    # the *track* and carries an icon above it, so it continues past the band
+    # top and bottom; an ornament belongs to the bar and stops where the band
+    # does. Measured on that clip against a capture with rows to spare either
+    # side: the marker reads 124-145 Lab outside the band, the ornament 3.5-10.5.
+    #
+    # Applied as a preference and not a filter -- candidates that continue
+    # outside are preferred only when at least one does -- so a rod whose
+    # marker does not overflow the band is left exactly as it was.
+    # Both tests have to pass: the continuation must be a real fraction of what
+    # the candidate reads inside the band, and it must be a real contrast in its
+    # own right. The ratio alone would promote a candidate that is barely there
+    # anywhere -- a few Lab units in and a few out is noise with a flattering
+    # quotient, not a marker.
+    fish_outside_ratio: float = 0.35        # of the candidate's in-band contrast
+    fish_outside_min_distance: float = 25.0  # and this much on its own
+    fish_outside_min_rows: int = 3           # fewer rows than this cannot judge
 
     # --- fish motion gate ---
     # The control bar has left/right arrow glyphs printed inside it. They are
@@ -283,6 +330,9 @@ class ReelVision:
         self._bg_lab: Optional[np.ndarray] = None
         self._width_samples: Deque[float] = deque(maxlen=48)
         self._established_width: Optional[float] = None
+        self._width_challenge: Deque[float] = deque(
+            maxlen=self.p.width_rechallenge_frames
+        )
         self._last_fish_time: Optional[float] = None
         self._fish_reject_streak: int = 0
         self._fish_strength: Optional[float] = None
@@ -547,9 +597,35 @@ class ReelVision:
         bg_lab: np.ndarray,
         track_w: int,
     ) -> Optional[Tuple[int, int]]:
-        """The bar is the widest contiguous block of non-background segments."""
+        """The bar is the widest contiguous block of non-background segments.
+
+        Background is judged against the remembered colour as well as this
+        frame's, because the track is translucent: its two ends lie over
+        different scenery and so read as different shades of the same element.
+        On tests/frames/other-rod-fail the two ends of one track sat 18.7 Lab
+        apart against a tolerance of 18.0 — a miss of less than a unit — and
+        the far end was therefore counted as bar and swallowed into it, giving
+        readings like 0.05-1.00 for a bar that ends at 0.65. A bar reported as
+        reaching the end of the track is not a small error: the fish is inside
+        it by definition, so the macro is told it is on target while the fish
+        is nowhere near, and it holds still and watches the progress drain.
+
+        The memory is only trusted while it still agrees with what this frame
+        found, so a stale background from before a biome change cannot start
+        marking the bar itself as background.
+        """
+        references = [bg_lab]
+        if (
+            self._bg_lab is not None
+            and np.linalg.norm(bg_lab - self._bg_lab) <= self.p.group_tolerance * 2
+        ):
+            references.append(self._bg_lab)
         is_bg = [
-            bool(np.linalg.norm(c - bg_lab) <= self.p.group_tolerance) for c in colours
+            any(
+                bool(np.linalg.norm(c - ref) <= self.p.group_tolerance)
+                for ref in references
+            )
+            for c in colours
         ]
 
         blocks: List[Tuple[int, int]] = []
@@ -568,6 +644,10 @@ class ReelVision:
 
         best = None
         best_score = -1.0
+        # Widths this frame that the established width refuses. Collected and
+        # reduced to one entry per frame, so that a window of them means a
+        # window of *frames* rather than however many blocks one frame split into.
+        refused: List[float] = []
         for start_idx, end_idx in blocks:
             width_frac = (end_idx - start_idx) / track_w
             if not (self.p.bar_min_width_frac <= width_frac <= self.p.bar_max_width_frac):
@@ -577,8 +657,13 @@ class ReelVision:
             # the bar. See bar_min_width_ratio for why the two sides differ.
             if self._established_width is not None:
                 if width_frac < self._established_width * self.p.bar_min_width_ratio:
+                    # Too narrow for the width we settled on — but the bar may
+                    # simply have shrunk, so the refusal is recorded rather
+                    # than merely obeyed. See _challenge_width.
+                    refused.append(width_frac)
                     continue
                 if width_frac > self._established_width * self.p.bar_max_width_ratio:
+                    refused.append(width_frac)
                     # Too wide means the bar has been merged with whatever sits
                     # beside it, so the bar is inside this block rather than
                     # absent. Dropping the frame outright costs ~11% of
@@ -618,7 +703,64 @@ class ReelVision:
             if score > best_score:
                 best_score = score
                 best = (start_idx, end_idx)
+
+        if self._established_width is not None:
+            if refused:
+                # The widest refusal is the one most likely to be the bar: a
+                # bar that has changed size is still the largest structure on
+                # the track, while the things that get refused alongside it are
+                # slivers. A merged reading is wider still, but erratic, and
+                # the consistency test is what throws those out.
+                self._challenge_width(max(refused))
+            elif best is not None:
+                # Nothing disagreed this frame, so the established width still
+                # describes what is on screen.
+                self._width_challenge.clear()
         return best
+
+    def _challenge_width(self, width: float) -> None:
+        """Note a bar-sized block that the established width refuses.
+
+        The width is re-settled only when a full window of refusals agrees with
+        itself, because that is what separates a bar that has genuinely changed
+        size from a reading that merged with its neighbour or collapsed onto a
+        sliver: the first persists and is consistent, the second is erratic.
+
+        Without this the first second of a fight fixes the bar's size for the
+        rest of it. That is wrong in both directions — a rod whose bar grows has
+        the excess cut off, and one whose bar shrinks has the real bar refused
+        for being too narrow, which costs the reading entirely.
+        """
+        self._width_challenge.append(width)
+        if len(self._width_challenge) < self._width_challenge.maxlen:
+            return
+
+        challenges = sorted(self._width_challenge)
+        if challenges[0] <= 0 or challenges[-1] > challenges[0] * self.p.width_rechallenge_spread:
+            return
+
+        settled = float(np.median(challenges))
+        self._established_width = settled
+        self._bar_width_prior = settled
+        self._width_samples.clear()
+        self._width_challenge.clear()
+
+    def _outside_lab(
+        self, frame: np.ndarray, y0: int, y1: int, x0: int, x1: int
+    ) -> List[np.ndarray]:
+        """The strips above and below the band, in Lab.
+
+        The fish marker is drawn on the track and continues into these rows —
+        on most rods it carries an icon above the band. An ornament drawn on
+        the control bar stops at the band edge, so measuring the same columns
+        here is what tells the two apart. Strips too thin to mean anything are
+        dropped rather than returned noisy.
+        """
+        strips = []
+        for a, b in ((0, y0), (y1, frame.shape[0])):
+            if b - a >= self.p.fish_outside_min_rows:
+                strips.append(self._band_lab(frame, a, b, x0, x1))
+        return strips
 
     def _profile(self, band_lab: np.ndarray, a: int, b: int) -> Tuple[float, float]:
         """How strongly, and over how much of the band, a segment stands out.
@@ -665,6 +807,7 @@ class ReelVision:
         track_w: int,
         now: float,
         band_lab: np.ndarray,
+        outside_lab: Optional[Sequence[np.ndarray]] = None,
     ) -> Tuple[Optional[float], bool]:
         """The fish is a narrow, full-height stripe unlike the columns beside it.
 
@@ -714,9 +857,7 @@ class ReelVision:
         ):
             floor = max(floor, self._fish_strength * self.p.fish_relative_strength)
 
-        best = None
-        best_score = 0.0
-        best_strength = 0.0
+        candidates = []
         for (seg_start, seg_end), colour in zip(segments, colours):
             width_frac = (seg_end - seg_start) / track_w
             if width_frac > self.p.fish_max_width_frac:
@@ -754,10 +895,31 @@ class ReelVision:
             score = distance * coverage * width_frac
             if self._last_fish_x is not None:
                 score *= max(0.2, 1.0 - abs(centre - self._last_fish_x) * 2.0)
-            if score > best_score:
-                best_score = score
-                best_strength = distance
-                best = centre
+            if score <= 0.0:
+                continue
+
+            # How much of the candidate is still there in the rows outside the
+            # band. A marker drawn on the track keeps going; an ornament drawn
+            # on the bar stops with it.
+            outside = 0.0
+            for strip in outside_lab or ():
+                outside = max(outside, self._profile(strip, seg_start, seg_end)[0])
+            candidates.append((score, distance, centre, outside))
+
+        # Prefer candidates that continue outside the band -- but only when
+        # there is one, so a rod whose marker is confined to the track is
+        # picked exactly as before.
+        continuing = [
+            c for c in candidates
+            if c[3] >= max(
+                self.p.fish_outside_min_distance,
+                self.p.fish_outside_ratio * c[1],
+            )
+        ]
+        pool = continuing or candidates
+        best = None
+        if pool:
+            best_score, best_strength, best, _outside = max(pool, key=lambda c: c[0])
 
         if best is None:
             # Nothing survived the gate. Report no fish rather than accepting a
@@ -784,6 +946,7 @@ class ReelVision:
         frame: np.ndarray,
         pre_located: bool = False,
         now: Optional[float] = None,
+        pad_rows: int = 0,
     ) -> ReelReading:
         """Read one BGR ROI frame containing the reel track.
 
@@ -799,6 +962,11 @@ class ReelVision:
           over a stone wall it reads brighter than its surroundings — so the
           darkness test is not something to depend on when the band is already
           known.
+
+        ``pad_rows`` says how many rows at the top and bottom the caller added
+        as context rather than as track. They are excluded from the band and
+        read separately, which is what lets the fish test tell a marker drawn
+        on the track from an ornament drawn on the control bar.
         """
         if frame is None or frame.size == 0 or frame.shape[1] < 16:
             return ReelReading(notes="empty frame")
@@ -808,8 +976,10 @@ class ReelVision:
         hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
         if pre_located:
             h = frame.shape[0]
-            margin = max(1, int(h * 0.18))
-            y0, y1 = margin, max(margin + 1, h - margin)
+            pad = max(0, min(pad_rows, (h - 2) // 2))
+            inner0, inner1 = pad, max(pad + 1, h - pad)
+            margin = max(1, int((inner1 - inner0) * 0.18))
+            y0, y1 = inner0 + margin, max(inner0 + margin + 1, inner1 - margin)
             x0, x1 = 0, frame.shape[1]
             band_found = True
         else:
@@ -820,6 +990,7 @@ class ReelVision:
             return ReelReading(notes="track span too narrow")
 
         band_lab = self._band_lab(frame, y0, y1, x0, x1)
+        outside_lab = self._outside_lab(frame, y0, y1, x0, x1)
         col_lab = np.median(band_lab, axis=0)
         segments = self._segment(col_lab)
         fish_segments = self._segment(col_lab, split_thin=True)
@@ -842,7 +1013,8 @@ class ReelVision:
         bar = self._pick_bar(segments, colours, bg_lab, track_w)
         fish_colours = [np.median(col_lab[a:b], axis=0) for a, b in fish_segments]
         fish_x, inside = self._pick_fish(
-            fish_segments, fish_colours, bg_lab, bar, track_w, now, band_lab
+            fish_segments, fish_colours, bg_lab, bar, track_w, now, band_lab,
+            outside_lab,
         )
 
         if bar is not None:
