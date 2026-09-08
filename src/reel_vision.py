@@ -578,9 +578,35 @@ class ReelVision:
         bg_lab: np.ndarray,
         track_w: int,
     ) -> Optional[Tuple[int, int]]:
-        """The bar is the widest contiguous block of non-background segments."""
+        """The bar is the widest contiguous block of non-background segments.
+
+        Background is judged against the remembered colour as well as this
+        frame's, because the track is translucent: its two ends lie over
+        different scenery and so read as different shades of the same element.
+        On tests/frames/other-rod-fail the two ends of one track sat 18.7 Lab
+        apart against a tolerance of 18.0 — a miss of less than a unit — and
+        the far end was therefore counted as bar and swallowed into it, giving
+        readings like 0.05-1.00 for a bar that ends at 0.65. A bar reported as
+        reaching the end of the track is not a small error: the fish is inside
+        it by definition, so the macro is told it is on target while the fish
+        is nowhere near, and it holds still and watches the progress drain.
+
+        The memory is only trusted while it still agrees with what this frame
+        found, so a stale background from before a biome change cannot start
+        marking the bar itself as background.
+        """
+        references = [bg_lab]
+        if (
+            self._bg_lab is not None
+            and np.linalg.norm(bg_lab - self._bg_lab) <= self.p.group_tolerance * 2
+        ):
+            references.append(self._bg_lab)
         is_bg = [
-            bool(np.linalg.norm(c - bg_lab) <= self.p.group_tolerance) for c in colours
+            any(
+                bool(np.linalg.norm(c - ref) <= self.p.group_tolerance)
+                for ref in references
+            )
+            for c in colours
         ]
 
         blocks: List[Tuple[int, int]] = []
