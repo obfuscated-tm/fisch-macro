@@ -138,6 +138,37 @@ class VisionParams:
     fish_reference_gap: int = 3
     fish_reference_span: int = 5
 
+    # --- fish marker vs. an ornament drawn on the bar ---
+    # Some rods draw a marker at the centre of the control bar: Castbound's is
+    # a magenta diamond. It is narrow, it is a colour the bar itself is not,
+    # and because it is drawn inside the bar it covers the whole band, so it
+    # satisfies every prior above and was picked as the fish in 16% of the
+    # fight frames of tests/clips/hallucinate.mov.
+    #
+    # That reading is worse than no reading. The ornament sits at the bar's
+    # centre by construction, so reporting it as the fish tells the controller
+    # its error is zero at the exact moment it is not: it stops steering, and
+    # the fish swims off while the bar holds still. On screen that is the
+    # macro "going the wrong way" for no visible reason.
+    #
+    # What separates them is where they are drawn. The fish marker belongs to
+    # the *track* and carries an icon above it, so it continues past the band
+    # top and bottom; an ornament belongs to the bar and stops where the band
+    # does. Measured on that clip against a capture with rows to spare either
+    # side: the marker reads 124-145 Lab outside the band, the ornament 3.5-10.5.
+    #
+    # Applied as a preference and not a filter -- candidates that continue
+    # outside are preferred only when at least one does -- so a rod whose
+    # marker does not overflow the band is left exactly as it was.
+    # Both tests have to pass: the continuation must be a real fraction of what
+    # the candidate reads inside the band, and it must be a real contrast in its
+    # own right. The ratio alone would promote a candidate that is barely there
+    # anywhere -- a few Lab units in and a few out is noise with a flattering
+    # quotient, not a marker.
+    fish_outside_ratio: float = 0.35        # of the candidate's in-band contrast
+    fish_outside_min_distance: float = 25.0  # and this much on its own
+    fish_outside_min_rows: int = 3           # fewer rows than this cannot judge
+
     # --- fish motion gate ---
     # The control bar has left/right arrow glyphs printed inside it. They are
     # narrow and differ in colour from the bar fill, so on shape and colour
@@ -620,6 +651,23 @@ class ReelVision:
                 best = (start_idx, end_idx)
         return best
 
+    def _outside_lab(
+        self, frame: np.ndarray, y0: int, y1: int, x0: int, x1: int
+    ) -> List[np.ndarray]:
+        """The strips above and below the band, in Lab.
+
+        The fish marker is drawn on the track and continues into these rows —
+        on most rods it carries an icon above the band. An ornament drawn on
+        the control bar stops at the band edge, so measuring the same columns
+        here is what tells the two apart. Strips too thin to mean anything are
+        dropped rather than returned noisy.
+        """
+        strips = []
+        for a, b in ((0, y0), (y1, frame.shape[0])):
+            if b - a >= self.p.fish_outside_min_rows:
+                strips.append(self._band_lab(frame, a, b, x0, x1))
+        return strips
+
     def _profile(self, band_lab: np.ndarray, a: int, b: int) -> Tuple[float, float]:
         """How strongly, and over how much of the band, a segment stands out.
 
@@ -665,6 +713,7 @@ class ReelVision:
         track_w: int,
         now: float,
         band_lab: np.ndarray,
+        outside_lab: Optional[Sequence[np.ndarray]] = None,
     ) -> Tuple[Optional[float], bool]:
         """The fish is a narrow, full-height stripe unlike the columns beside it.
 
@@ -714,9 +763,7 @@ class ReelVision:
         ):
             floor = max(floor, self._fish_strength * self.p.fish_relative_strength)
 
-        best = None
-        best_score = 0.0
-        best_strength = 0.0
+        candidates = []
         for (seg_start, seg_end), colour in zip(segments, colours):
             width_frac = (seg_end - seg_start) / track_w
             if width_frac > self.p.fish_max_width_frac:
@@ -754,10 +801,31 @@ class ReelVision:
             score = distance * coverage * width_frac
             if self._last_fish_x is not None:
                 score *= max(0.2, 1.0 - abs(centre - self._last_fish_x) * 2.0)
-            if score > best_score:
-                best_score = score
-                best_strength = distance
-                best = centre
+            if score <= 0.0:
+                continue
+
+            # How much of the candidate is still there in the rows outside the
+            # band. A marker drawn on the track keeps going; an ornament drawn
+            # on the bar stops with it.
+            outside = 0.0
+            for strip in outside_lab or ():
+                outside = max(outside, self._profile(strip, seg_start, seg_end)[0])
+            candidates.append((score, distance, centre, outside))
+
+        # Prefer candidates that continue outside the band -- but only when
+        # there is one, so a rod whose marker is confined to the track is
+        # picked exactly as before.
+        continuing = [
+            c for c in candidates
+            if c[3] >= max(
+                self.p.fish_outside_min_distance,
+                self.p.fish_outside_ratio * c[1],
+            )
+        ]
+        pool = continuing or candidates
+        best = None
+        if pool:
+            best_score, best_strength, best, _outside = max(pool, key=lambda c: c[0])
 
         if best is None:
             # Nothing survived the gate. Report no fish rather than accepting a
@@ -784,6 +852,7 @@ class ReelVision:
         frame: np.ndarray,
         pre_located: bool = False,
         now: Optional[float] = None,
+        pad_rows: int = 0,
     ) -> ReelReading:
         """Read one BGR ROI frame containing the reel track.
 
@@ -799,6 +868,11 @@ class ReelVision:
           over a stone wall it reads brighter than its surroundings — so the
           darkness test is not something to depend on when the band is already
           known.
+
+        ``pad_rows`` says how many rows at the top and bottom the caller added
+        as context rather than as track. They are excluded from the band and
+        read separately, which is what lets the fish test tell a marker drawn
+        on the track from an ornament drawn on the control bar.
         """
         if frame is None or frame.size == 0 or frame.shape[1] < 16:
             return ReelReading(notes="empty frame")
@@ -808,8 +882,10 @@ class ReelVision:
         hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
         if pre_located:
             h = frame.shape[0]
-            margin = max(1, int(h * 0.18))
-            y0, y1 = margin, max(margin + 1, h - margin)
+            pad = max(0, min(pad_rows, (h - 2) // 2))
+            inner0, inner1 = pad, max(pad + 1, h - pad)
+            margin = max(1, int((inner1 - inner0) * 0.18))
+            y0, y1 = inner0 + margin, max(inner0 + margin + 1, inner1 - margin)
             x0, x1 = 0, frame.shape[1]
             band_found = True
         else:
@@ -820,6 +896,7 @@ class ReelVision:
             return ReelReading(notes="track span too narrow")
 
         band_lab = self._band_lab(frame, y0, y1, x0, x1)
+        outside_lab = self._outside_lab(frame, y0, y1, x0, x1)
         col_lab = np.median(band_lab, axis=0)
         segments = self._segment(col_lab)
         fish_segments = self._segment(col_lab, split_thin=True)
@@ -842,7 +919,8 @@ class ReelVision:
         bar = self._pick_bar(segments, colours, bg_lab, track_w)
         fish_colours = [np.median(col_lab[a:b], axis=0) for a, b in fish_segments]
         fish_x, inside = self._pick_fish(
-            fish_segments, fish_colours, bg_lab, bar, track_w, now, band_lab
+            fish_segments, fish_colours, bg_lab, bar, track_w, now, band_lab,
+            outside_lab,
         )
 
         if bar is not None:

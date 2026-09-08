@@ -325,6 +325,25 @@ class Detector:
     # Structure-based reel reading
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _padded_bar_roi(roi):
+        """The bar ROI grown vertically, and by how much (as a window fraction).
+
+        Grown by its own height either side where the window allows it, so the
+        band keeps its calibrated proportions and the added rows are a clear
+        step outside the track rather than a sliver of its border.
+        """
+        height = max(1e-4, roi.y_end - roi.y_start)
+        pad = min(height, roi.y_start, max(0.0, 1.0 - roi.y_end))
+
+        class _Padded:
+            x_start = roi.x_start
+            x_end = roi.x_end
+            y_start = roi.y_start - pad
+            y_end = roi.y_end + pad
+
+        return _Padded, pad
+
     def capture_window_band(self, settings) -> Optional[np.ndarray]:
         """Capture the lower band of the window, where the reel UI lives.
 
@@ -361,11 +380,29 @@ class Detector:
             # that, and is stable frame to frame by construction — which matters
             # more here than being exactly right, since positions are normalised
             # against this span and a span that moves invents velocity.
-            frame = self.capture_roi(settings.bar_roi)
+            # Captured with rows to spare above and below the calibrated
+            # rectangle. The reader needs them to tell the fish marker, which
+            # is drawn on the track and continues past it, from an ornament
+            # drawn on the control bar, which stops where the bar does — see
+            # VisionParams.fish_outside_ratio. The rectangle itself is often
+            # dragged tight around the track, leaving nothing to measure.
+            #
+            # It is close to free: a grab costs what it costs per call rather
+            # than per pixel, and this one is a few hundred rows wide by tens
+            # of rows tall either way.
+            padded, pad_frac = self._padded_bar_roi(settings.bar_roi)
+            frame = self.capture_roi(padded)
             if frame is None:
                 return None, None, None
-            return self._vision.read(frame, pre_located=True), frame, (
-                0, 0, frame.shape[1], frame.shape[0]
+
+            height = max(1e-4, padded.y_end - padded.y_start)
+            pad_rows = int(round(frame.shape[0] * pad_frac / height))
+            pad_rows = max(0, min(pad_rows, (frame.shape[0] - 2) // 2))
+            reading = self._vision.read(frame, pre_located=True, pad_rows=pad_rows)
+            # The track box excludes the context rows, so everything downstream
+            # — the overlay above all — still sees the calibrated rectangle.
+            return reading, frame, (
+                0, pad_rows, frame.shape[1], frame.shape[0] - pad_rows
             )
 
         # Auto-location needs the surroundings, so it pays for the wider grab.
