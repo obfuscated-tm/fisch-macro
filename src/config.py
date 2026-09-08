@@ -123,6 +123,7 @@ class Settings:
         bite_progress_threshold: Progress fill that indicates a bite with fish visible.
         fast_catch_min_seconds: Minimum reeling time for fast/instant-catch rods (lower than min_catch_seconds).
         post_cast_bite_window: Seconds after cast release to aggressively scan for an instant bite.
+        hunt_timeout_seconds: Seconds of a hunt going nowhere before recasting (0 disables).
         auto_locate_track: Search for the track instead of trusting bar_roi. Off by default — see src/detector.py.
         track_search_top: Fraction of window height below which to search for the track.
         track_relocate_every: Ticks between full track re-locations during a fight.
@@ -205,6 +206,18 @@ class Settings:
     bite_progress_threshold: float = 0.08
     fast_catch_min_seconds: float = 1.0
     post_cast_bite_window: float = 2.5
+
+    # A cast that never took leaves the macro waiting for a bite that cannot
+    # come — the line is not in the water, so no shake prompt and no minigame
+    # will ever appear, and nothing in the hunt states times out. Left
+    # overnight that is the whole session gone. Recasting after a long enough
+    # silence costs one wasted cast in the worst case and rescues the run in
+    # the common one.
+    #
+    # Generous on purpose: a real hunt can be slow, and the recast is only
+    # correct when nothing at all has happened. Shake prompts push the deadline
+    # back, so a fish that is being lured is never interrupted.
+    hunt_timeout_seconds: float = 90.0
 
     # --- structure-based reel vision (see src/reel_vision.py) ---
     auto_locate_track: bool = False
