@@ -15,7 +15,6 @@ from collections import deque
 import time
 from typing import Callable, Optional, List
 
-from src.movement_tracker import MovementTracker
 from src.vision import VisionSnapshot
 from src.reel_controller import ControlParams, ReelController
 from src.fight_estimator import FightEstimator
@@ -144,7 +143,6 @@ class MacroEngine:
         self._hunt_started_at: Optional[float] = None
         self._saw_midgame_progress = False
         self._prev_progress = 0.0
-        self._fish_tracker = MovementTracker()
         self._reel_controller = ReelController()
         # Works out what kind of fight this is while fighting it: the gain and
         # loss rates, and so the on-target fraction this particular fish demands.
@@ -423,7 +421,6 @@ class MacroEngine:
         self._last_action_type = None
         self._saw_midgame_progress = False
         self._prev_progress = 0.0
-        self._fish_tracker.reset()
         self._last_good_read_time = 0.0
 
         # Rebuild the controller from settings each fight so tuning changes
@@ -900,41 +897,6 @@ class MacroEngine:
             self._bar_velocity = (self._bar_velocity * (1.0 - bar_alpha)) + (inst_bar_v * bar_alpha)
         self._last_bar_center = bar_center
 
-    def _fish_speed_per_second(self, settings) -> float:
-        """Best estimate of how fast the fish is moving right now."""
-        tick = max(settings.scan_interval_ms / 1000.0, 0.02)
-        v_frame = abs(self._fish_velocity) / tick
-        v_recent = self._fish_tracker.speed(settings.prediction_recent_window_seconds)
-        return max(v_recent, v_frame)
-
-    def _prediction_motion_scale(self, settings) -> float:
-        """0 = fish treated as still; 1 = full prediction blend."""
-        speed = self._fish_speed_per_second(settings)
-        low = settings.prediction_stationary_speed
-        high = low * 2.5
-        if speed <= low:
-            return 0.0
-        if speed >= high:
-            return 1.0
-        return (speed - low) / (high - low)
-
-    def _predicted_fish_x(self, fish_x: float, settings) -> float:
-        motion = self._prediction_motion_scale(settings)
-        if motion <= 0.0:
-            return fish_x
-
-        lookahead = settings.fish_prediction_ms / 1000.0
-        use_accel = settings.prediction_use_acceleration and motion >= 0.35
-        predicted = self._fish_tracker.predict(
-            fish_x,
-            lookahead,
-            use_acceleration=use_accel,
-            window_seconds=settings.prediction_recent_window_seconds,
-        )
-        weight = settings.prediction_weight * motion
-        blended = (fish_x * (1.0 - weight)) + (predicted * weight)
-        return max(0.0, min(1.0, blended))
-
     def _finish_catch(self, result, settings, reason: str) -> None:
         """Record a successful catch and transition to COMPLETE."""
         self.controller.mouse_release()
@@ -948,36 +910,6 @@ class MacroEngine:
         self._last_catch_time = time.time()
         self._reset_post_catch_gate()
         self._set_state(MacroState.COMPLETE)
-
-    def _arrival_lead_bias(
-        self,
-        fish_x: float,
-        bar_center: float,
-        settings,
-    ) -> float:
-        """digmacro-style lead: nudge control when fish is moving toward the bar."""
-        if not settings.prediction_arrival_lead:
-            return 0.0
-        motion = self._prediction_motion_scale(settings)
-        if motion < 0.25:
-            return 0.0
-        arrival = self._fish_tracker.arrival_seconds(bar_center, fish_x)
-        if arrival is None:
-            return 0.0
-        lookahead = settings.fish_prediction_ms / 1000.0
-        if arrival <= 0 or arrival > lookahead * 1.5:
-            return 0.0
-        v = self._fish_tracker.recent_velocity(settings.prediction_recent_window_seconds)
-        direction = 1.0 if v > 0 else -1.0
-        bias = direction * 0.04 * (1.0 - (arrival / max(lookahead, 1e-3)))
-        return bias * motion
-
-    def _effective_bar_center(self, bar_center: float, settings) -> float:
-        """Bar center adjusted for coasting — won't instantly reverse after hold/release."""
-        drift = self._bar_velocity * settings.bar_momentum_factor
-        return max(0.0, min(1.0, bar_center + drift))
-
-    # ─── State Handlers ───────────────────────────────────────────
 
     def _do_casting(self, settings):
         """
@@ -1361,7 +1293,6 @@ class MacroEngine:
         self._last_good_read_time = time.time()
 
         bar_center = (bar_left + bar_right) / 2.0
-        self._fish_tracker.add_sample(fish_x)
 
         decision = self._reel_controller.decide(fish_x, bar_center)
 

@@ -808,31 +808,38 @@ def scenario_calibration_rejects_black_slide_frame() -> None:
 
 
 def scenario_stationary_no_overpredict() -> None:
-    """Still fish should use current position, not lookahead blend."""
-    settings = Settings()
-    engine, _, _ = make_engine([])
-    engine._fish_velocity = 0.0
+    """A still fish is aimed at where it is, not where it was going.
 
+    This used to drive MacroEngine._predicted_fish_x. That blend turned out to
+    have no callers in the control loop — the macro hands the raw position to
+    ReelController and steers on decision.fish_projected — so the check was
+    passing against code the macro never ran. It now drives the controller.
+    """
+    from src.reel_controller import ControlParams, ReelController
+
+    ctrl = ReelController(ControlParams())
+    t = 0.0
+    decision = None
     for _ in range(12):
-        engine._fish_tracker.add_sample(0.50)
-        time.sleep(0.015)
-
-    predicted = engine._predicted_fish_x(0.50, settings)
-    assert abs(predicted - 0.50) < 0.008, (
-        f"stationary fish should not over-predict, got {predicted}"
+        decision = ctrl.decide(0.50, 0.50, now=t)
+        t += 0.02
+    assert abs(decision.fish_projected - 0.50) < 0.008, (
+        f"stationary fish should not over-predict, got {decision.fish_projected}"
     )
 
-    engine._fish_tracker.reset()
-    for i in range(6):
-        engine._fish_tracker.add_sample(0.30 + i * 0.02)
-        time.sleep(0.02)
+    ctrl = ReelController(ControlParams())
+    t = 0.0
+    x = 0.30
     for _ in range(6):
-        engine._fish_tracker.add_sample(0.46)
-        time.sleep(0.02)
-    engine._fish_velocity = 0.0
-    after_stop = engine._predicted_fish_x(0.46, settings)
-    assert abs(after_stop - 0.46) < 0.02, (
-        f"fish that stopped moving should not keep old momentum, got {after_stop}"
+        ctrl.decide(x, 0.50, now=t)
+        x += 0.02
+        t += 0.02
+    for _ in range(8):
+        decision = ctrl.decide(0.46, 0.50, now=t)
+        t += 0.02
+    assert abs(decision.fish_projected - 0.46) < 0.02, (
+        f"fish that stopped moving should not keep old momentum, "
+        f"got {decision.fish_projected}"
     )
     write_evidence(
         "task-5-smoke-stationary-predict.txt",
