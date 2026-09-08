@@ -265,9 +265,22 @@ class MacroEngine:
 
     def start(self):
         """Start the macro engine in a daemon thread."""
-        if self._thread is not None and self._thread.is_alive():
+        if self.is_running():
             logger.warning("Macro already running")
             return
+
+        # stop() no longer waits for the loop to unwind — it returns as soon as
+        # the request is in, so the UI can repaint. A restart that lands inside
+        # that window has to collect the old thread first, or two loops would
+        # drive the mouse at once. The wait is bounded by one tick, because the
+        # loop's sleeps are interruptible.
+        if self._thread is not None and self._thread.is_alive():
+            self._thread.join(timeout=2.0)
+            if self._thread.is_alive():
+                logger.warning("Previous macro loop has not stopped; not restarting")
+                self._emit_log("Previous run is still stopping — try again in a moment")
+                return
+        self._thread = None
 
         self._stop_event.clear()
         self.controller.start()
@@ -278,15 +291,32 @@ class MacroEngine:
         logger.info("Macro engine started")
         self._emit_log("Macro started")
 
-    def stop(self):
-        """Stop the macro engine gracefully."""
+    def stop(self, wait: float = 0.0):
+        """Request a stop and, by default, return without waiting for it.
+
+        This is called from the Tk main thread — by the Stop button, by the
+        hotkey and on window close — and it used to join the worker for up to
+        three seconds. That join is what made stopping and quitting feel like
+        they hung: the whole UI is frozen for its duration, so the button does
+        not even repaint until the loop has unwound.
+
+        Everything a stop must guarantee has already happened by the time this
+        returns: the flag is set, the mouse button is up, and ``is_running()``
+        reports False. The loop's own ``finally`` releases the mouse again and
+        marks the state. Pass ``wait`` only where the thread genuinely must be
+        gone before continuing.
+
+        Args:
+            wait: Seconds to wait for the loop thread, or 0 to return at once.
+        """
         self._stop_event.set()
         self.controller.stop()
         self._set_state(MacroState.STOPPED)
 
-        if self._thread is not None:
-            self._thread.join(timeout=3.0)
-            self._thread = None
+        if wait and self._thread is not None:
+            self._thread.join(timeout=wait)
+            if not self._thread.is_alive():
+                self._thread = None
 
         logger.info("Macro engine stopped")
         self._emit_log("Macro stopped")
@@ -303,6 +333,17 @@ class MacroEngine:
     def _should_stop(self) -> bool:
         """Check if we should stop (killswitch or manual stop)."""
         return self._stop_event.is_set() or self.controller.is_killed()
+
+    def _wait(self, seconds: float) -> bool:
+        """Sleep, but wake immediately on a stop request.
+
+        Every pause in the loop goes through here rather than time.sleep, so a
+        stop is acted on within microseconds instead of at the end of whatever
+        interval happened to be running. Returns True if we should stop.
+        """
+        if seconds > 0:
+            self._stop_event.wait(seconds)
+        return self._should_stop()
 
     def _stop_reason(self) -> str:
         """Return the current stop reason for logging."""
@@ -343,13 +384,13 @@ class MacroEngine:
                 elif self.state == MacroState.COMPLETE:
                     self._do_complete(settings)
                 else:
-                    time.sleep(interval)
+                    self._wait(interval)
 
                 # If we are reeling, we want maximum responsiveness,
                 # so we skip the extra sleep and rely on the scan_interval in the next loop.
                 # For other states, a small sleep is fine.
                 if self.state != MacroState.REELING:
-                    time.sleep(interval)
+                    self._wait(interval)
 
         except Exception as e:
             logger.error(f"Macro loop error: {e}", exc_info=True)
@@ -936,15 +977,17 @@ class MacroEngine:
         # Hold mouse to charge cast
         self.controller.mouse_hold()
 
-        # Wait for the cast hold time (checking killswitch periodically)
-        elapsed = 0.0
-        while elapsed < settings.cast_hold_time and not self._should_stop():
+        # Hold for cast_hold_time, measured on the clock. Counting the nominal
+        # sleep instead ignored the time detect_all takes, so the rod was
+        # charged for roughly twice the configured hold.
+        deadline = time.time() + settings.cast_hold_time
+        while time.time() < deadline and not self._should_stop():
             result = self.detector.detect_all()
             if self._try_start_reeling(result, settings, "during cast"):
                 self.controller.mouse_release()
                 return
-            time.sleep(0.05)
-            elapsed += 0.05
+            if self._wait(min(0.05, max(0.0, deadline - time.time()))):
+                break
 
         # Release to cast — instant-catch rods often bite in the same moment
         self.controller.mouse_release()
@@ -954,14 +997,14 @@ class MacroEngine:
             return
 
         interval = max(0.02, settings.scan_interval_ms / 1000.0)
-        post_cast = 0.0
-        while post_cast < settings.post_cast_bite_window and not self._should_stop():
+        deadline = time.time() + settings.post_cast_bite_window
+        while time.time() < deadline and not self._should_stop():
             result = self.detector.detect_all()
             self._publish_hunt_status(result, settings)
             if self._try_start_reeling(result, settings, "after cast"):
                 return
-            time.sleep(interval)
-            post_cast += interval
+            if self._wait(interval):
+                break
 
         self._set_state(MacroState.WAITING)
 
@@ -1349,14 +1392,14 @@ class MacroEngine:
         self.status_hint = "Catch complete — waiting to recast"
 
         # Wait for recast delay; poll so post-catch gate can arm before cast
-        elapsed = 0.0
         interval = max(0.05, settings.scan_interval_ms / 1000.0)
-        while elapsed < settings.recast_delay and not self._should_stop():
+        deadline = time.time() + settings.recast_delay
+        while time.time() < deadline and not self._should_stop():
             result = self.detector.detect_all()
             self._can_hunt_new_bite(result, settings)
             self._publish_hunt_status(result, settings)
-            time.sleep(interval)
-            elapsed += interval
+            if self._wait(interval):
+                break
 
         if self._should_stop():
             return

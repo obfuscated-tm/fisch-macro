@@ -47,7 +47,13 @@ class Controller:
         self._hotkey_key = None
         self._hotkey_name = "f6"
         self._last_hotkey_time = 0.0
-        self._hotkey_debounce_seconds = 0.7
+        # Only wide enough to collapse the two paths that see one keypress —
+        # this listener and the GUI's own Tk binding. It used to be 0.7s, which
+        # is long enough to swallow a *deliberate* second press: tapping the
+        # hotkey to start and again half a second later to stop did nothing at
+        # all, and the run only stopped on a third press a second later. A key
+        # release does not auto-repeat, so there is nothing else to debounce.
+        self._hotkey_debounce_seconds = 0.2
         self.logger = logging.getLogger("controller")
 
     def setup_killswitch(self, key_name: str = "f6") -> None:

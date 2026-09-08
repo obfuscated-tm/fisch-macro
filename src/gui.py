@@ -886,12 +886,16 @@ class MacroGUI:
     def _toggle_macro(self):
         """Start or stop the macro."""
         if self.engine.is_running():
-            self.engine.stop()
+            # Repaint first. The button used to change only after stop()
+            # returned, and stop() waited on the worker thread, so pressing
+            # Stop looked like nothing had happened for as long as that took.
             self.start_button.config(
                 text="▶  START",
                 bg=COLORS["accent_green"],
                 activebackground="#00b563",
             )
+            self.start_button.update_idletasks()
+            self.engine.stop()
         else:
             # Update window tracking
             bounds = self.window_tracker.get_roblox_bounds()
@@ -920,9 +924,14 @@ class MacroGUI:
             )
 
     def _toggle_from_hotkey(self):
-        """Toggle the macro from F6/global hotkey on the Tk main thread."""
+        """Toggle the macro from F6/global hotkey on the Tk main thread.
+
+        Two paths deliver the same press — the global listener and the Tk
+        binding below it — so the first one through wins for a moment. Kept
+        short deliberately: see Controller._hotkey_debounce_seconds.
+        """
         now = time.monotonic()
-        if now - self._last_hotkey_toggle < 0.7:
+        if now - self._last_hotkey_toggle < 0.2:
             return
         self._last_hotkey_toggle = now
         self._append_log(f"Hotkey {self.settings.killswitch_key.upper()} pressed")
@@ -1147,6 +1156,12 @@ class MacroGUI:
 
     def _emergency_stop(self):
         """Stop the macro from the GUI without relying on global hotkeys."""
+        self.start_button.config(
+            text="▶  START",
+            bg=COLORS["accent_green"],
+            activebackground="#00b563",
+        )
+        self.start_button.update_idletasks()
         self.engine.stop()
         self._append_log("Emergency stop pressed")
 
@@ -1350,9 +1365,14 @@ class MacroGUI:
     # ─── Window Management ────────────────────────────────────────
 
     def _on_close(self):
-        """Handle window close event."""
+        """Handle window close event.
+
+        The loop thread is a daemon and its stop flag is already set, so the
+        window can go now; a short join keeps the common case tidy without the
+        multi-second stall that made quitting feel hung.
+        """
         if self.engine.is_running():
-            self.engine.stop()
+            self.engine.stop(wait=0.3)
         self.root.destroy()
 
     def run(self):
