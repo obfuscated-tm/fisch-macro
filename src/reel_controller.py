@@ -308,13 +308,20 @@ class ReelController:
         fish_v = self._fish.velocity()
         bar_v = self._bar.velocity()
 
-        # Project the fish forward, but only if it is genuinely moving.
-        if abs(fish_v) < self.p.stationary_speed:
-            fish_projected = fish_x
-        else:
-            lead = fish_v * self.p.lead_seconds
-            lead = max(-self.p.max_lead, min(self.p.max_lead, lead))
-            fish_projected = fish_x + lead
+        # Project the fish forward, faded in with speed rather than switched
+        # on at a threshold. Switching it meant the aim point jumped between
+        # fish_x and fish_x + lead whenever the measured speed crossed
+        # stationary_speed — measured in the closed loop, 223 times over 7200
+        # ticks, by as much as 0.0128 of the track in a single tick. The error
+        # this feeds is multiplied by duty_kp, which is 10, so that is a swing
+        # of more than a tenth of the duty cycle caused by nothing at all.
+        #
+        # The taper is exactly 1 at stationary_speed, so anything moving faster
+        # than that is projected precisely as it was before.
+        lead = fish_v * self.p.lead_seconds
+        lead *= min(1.0, abs(fish_v) / max(self.p.stationary_speed, 1e-6))
+        lead = max(-self.p.max_lead, min(self.p.max_lead, lead))
+        fish_projected = fish_x + lead
 
         # Project the bar forward by the distance it needs to stop. For a
         # double integrator that distance goes as v^2, not v, so the linear
