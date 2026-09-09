@@ -127,6 +127,9 @@ class Settings:
         control_max_brake_distance: Bound on the v^2 braking projection, so one bad edge cannot lurch the bar.
         control_lead_seconds: Fish velocity lookahead for the switching decision.
         control_stationary_speed: Below this fish speed, no lead is applied.
+        humanize: Scatter cast/recast/shake timings and click positions instead of repeating them exactly.
+        timing_jitter_frac: One sigma of the timing scatter, as a fraction of the configured duration.
+        click_jitter_px: Largest offset applied to a click target, in screen pixels.
 """
 
     killswitch_key: str = "f6"
@@ -212,6 +215,14 @@ class Settings:
     control_max_brake_distance: float = 0.35
     control_lead_seconds: float = 0.07
     control_stationary_speed: float = 0.05
+
+    # --- input variance (see src/humanize.py) ---
+    # Left on by default. The cost is a few tens of milliseconds of scatter on
+    # timings the game does not measure; the alternative is a cast held for the
+    # identical fraction of a millisecond a thousand times running.
+    humanize: bool = True
+    timing_jitter_frac: float = 0.12
+    click_jitter_px: float = 3.0
 
 
 class ConfigManager:

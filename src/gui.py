@@ -147,6 +147,7 @@ class MacroGUI:
             self.scan_interval_var,
             self.auto_recast_var,
             self.shake_enabled_var,
+            self.humanize_var,
             self.duty_kp_var,
             self.duty_ki_var,
             self.neutral_duty_var,
@@ -618,6 +619,11 @@ class MacroGUI:
 
         self.show_live_vision_var = tk.BooleanVar(value=self.settings.show_live_vision)
         self._add_toggle(content, "Live Vision Preview", self.show_live_vision_var)
+
+        # Off means every cast is charged for the identical number of
+        # microseconds and every shake click lands on the identical pixel.
+        self.humanize_var = tk.BooleanVar(value=self.settings.humanize)
+        self._add_toggle(content, "Humanize Inputs", self.humanize_var)
 
         # Hotkey — one row, next to the toggles it belongs with.
         ks_frame = ttk.Frame(content, style="Settings.TFrame")
@@ -1160,6 +1166,7 @@ class MacroGUI:
             self.settings.scan_interval_ms = int(self.scan_interval_var.get())
             self.settings.auto_recast = self.auto_recast_var.get()
             self.settings.shake_enabled = self.shake_enabled_var.get()
+            self.settings.humanize = self.humanize_var.get()
             self.settings.control_duty_kp = self.duty_kp_var.get()
             self.settings.control_duty_ki = self.duty_ki_var.get()
             self.settings.control_neutral_duty = self.neutral_duty_var.get()

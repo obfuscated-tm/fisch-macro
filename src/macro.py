@@ -18,8 +18,29 @@ from typing import Callable, Optional, List
 from src.vision import VisionSnapshot
 from src.reel_controller import ControlParams, ReelController
 from src.fight_estimator import FightEstimator
+from src.humanize import jitter_seconds
 
 logger = logging.getLogger("macro")
+
+
+def _humanized(settings, value: float, floor: float = 0.0) -> float:
+    """Scatter a configured duration, unless the user has turned that off.
+
+    Only the timings the game does not measure go through here — how long the
+    rod is charged, how long the macro idles between casts, how long it waits
+    between shake clicks. The reel loop deliberately does not; see
+    src/humanize.py for why.
+    """
+    if not getattr(settings, "humanize", False):
+        return value
+    return jitter_seconds(value, getattr(settings, "timing_jitter_frac", 0.0), floor)
+
+
+def _click_jitter_px(settings) -> float:
+    """Pixel scatter to apply to a click target, or zero when disabled."""
+    if not getattr(settings, "humanize", False):
+        return 0.0
+    return getattr(settings, "click_jitter_px", 0.0)
 
 
 class MacroState(enum.Enum):
@@ -734,10 +755,15 @@ class MacroEngine:
             )
             return False
         now = time.time()
-        if now - self._last_shake_click_time < settings.shake_click_cooldown_seconds:
+        cooldown = _humanized(
+            settings, settings.shake_click_cooldown_seconds, floor=0.02
+        )
+        if now - self._last_shake_click_time < cooldown:
             return False
         x, y = result.shake_pos
-        self.controller.mouse_click(int(x), int(y))
+        self.controller.mouse_click(
+            int(x), int(y), jitter_px=_click_jitter_px(settings)
+        )
         self._last_shake_click_time = now
         # Progress: the line is in the water and the game is responding, so the
         # hunt watchdog starts again from here.
@@ -932,7 +958,7 @@ class MacroEngine:
         # Hold for cast_hold_time, measured on the clock. Counting the nominal
         # sleep instead ignored the time detect_all takes, so the rod was
         # charged for roughly twice the configured hold.
-        deadline = time.time() + settings.cast_hold_time
+        deadline = time.time() + _humanized(settings, settings.cast_hold_time, floor=0.05)
         while time.time() < deadline and not self._should_stop():
             result = self.detector.detect_all()
             if self._try_start_reeling(result, settings, "during cast"):
@@ -1383,12 +1409,13 @@ class MacroEngine:
         if self._should_stop():
             return
 
-        self._emit_log(f"Waiting {settings.recast_delay}s before recast...")
+        recast_delay = _humanized(settings, settings.recast_delay, floor=0.2)
+        self._emit_log(f"Waiting {recast_delay:.2f}s before recast...")
         self.status_hint = "Catch complete — waiting to recast"
 
         # Wait for recast delay; poll so post-catch gate can arm before cast
         interval = max(0.05, settings.scan_interval_ms / 1000.0)
-        deadline = time.time() + settings.recast_delay
+        deadline = time.time() + recast_delay
         while time.time() < deadline and not self._should_stop():
             result = self.detector.detect_all()
             self._can_hunt_new_bite(result, settings)
