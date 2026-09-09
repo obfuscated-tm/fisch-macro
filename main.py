@@ -12,7 +12,7 @@ from src.controller import Controller
 from src.detector import Detector
 from src.macro import MacroEngine
 from src.paths import log_dir, resolve_base_dir
-from src.window_tracker import WindowTracker
+from src.window_tracker import WindowTracker, report_backend
 
 
 def setup_logging(base_dir: str, console_level: int = logging.INFO):
@@ -99,54 +99,6 @@ def parse_args(argv=None):
         ),
     )
     return parser.parse_args(argv)
-
-
-def report_backend(window_tracker) -> int:
-    """Print what the window-tracking backend can see.
-
-    Exercises the platform lookup for real — the Win32 window walk, the X11
-    `_NET_CLIENT_LIST` read — rather than merely importing it, which is the
-    difference between a build that packages and a build that works.
-
-    Args:
-        window_tracker: A constructed WindowTracker.
-
-    Returns:
-        0 if the platform has a backend and it answered without raising.
-        Not finding the game is not a failure; nothing may be running.
-    """
-    backend = window_tracker.backend
-    if backend is None:
-        print(
-            f"No window tracking backend for platform {sys.platform!r}. "
-            "The macro cannot locate the game window on this system.",
-            file=sys.stderr,
-        )
-        return 1
-
-    print(f"backend:  {backend.name}")
-
-    hint = backend.diagnostics()
-    if hint:
-        print(f"warning:  {hint}")
-
-    bounds = window_tracker.get_roblox_bounds()
-    if bounds is None:
-        print("window:   not found — is the game running, and windowed?")
-    else:
-        print(
-            f"window:   {bounds.width}x{bounds.height} "
-            f"at ({bounds.x}, {bounds.y})"
-        )
-
-    scale = window_tracker.get_scale_factor()
-    print(f"scale:    {scale}x")
-
-    if not scale > 0:
-        print(f"Implausible display scale factor: {scale}", file=sys.stderr)
-        return 1
-
-    return 0
 
 
 def main(argv=None):

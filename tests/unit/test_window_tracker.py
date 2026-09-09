@@ -15,7 +15,12 @@ import pytest
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
-from src.window_tracker import WindowBounds, WindowTracker, create_backend  # noqa: E402
+from src.window_tracker import (  # noqa: E402
+    WindowBounds,
+    WindowTracker,
+    create_backend,
+    report_backend,
+)
 from src.window_tracker.base import (  # noqa: E402
     DEFAULT_APP_NAMES,
     WindowBackend,
@@ -216,58 +221,46 @@ def test_the_hint_is_logged_once_not_every_frame(caplog):
 
 
 def test_check_backend_reports_a_working_backend(capsys):
-    import main
-
     tracker = WindowTracker(backend=FakeBackend(
         bounds=WindowBounds(0, 33, 800, 480), scale=1.0
     ))
 
-    assert main.report_backend(tracker) == 0
+    assert report_backend(tracker) == 0
     out = capsys.readouterr().out
     assert "fake" in out and "800x480" in out and "1.0x" in out
 
 
 def test_check_backend_actually_calls_the_platform_lookup(capsys):
     """The point of the flag: exercise find_window, not just import it."""
-    import main
-
     backend = FakeBackend(bounds=None, scale=1.0)
-    main.report_backend(WindowTracker(backend=backend))
+    report_backend(WindowTracker(backend=backend))
 
     assert backend.find_calls == 1
     assert backend.scale_calls == 1
 
 
 def test_check_backend_fails_when_the_platform_has_no_backend(capsys):
-    import main
-
     tracker = WindowTracker(backend=FakeBackend())
     tracker.backend = None
 
-    assert main.report_backend(tracker) == 1
+    assert report_backend(tracker) == 1
 
 
 def test_a_missing_game_window_is_not_a_failure(capsys):
     """Nothing is running in CI; that must not be read as a broken backend."""
-    import main
-
-    assert main.report_backend(WindowTracker(backend=FakeBackend(scale=1.0))) == 0
+    assert report_backend(WindowTracker(backend=FakeBackend(scale=1.0))) == 0
     assert "not found" in capsys.readouterr().out
 
 
 def test_an_environment_hint_is_surfaced(capsys):
-    import main
-
     tracker = WindowTracker(backend=FakeBackend(scale=1.0, hint="looks like Wayland"))
-    main.report_backend(tracker)
+    report_backend(tracker)
 
     assert "looks like Wayland" in capsys.readouterr().out
 
 
 def test_an_implausible_scale_factor_is_a_failure(capsys):
-    import main
-
     tracker = WindowTracker(backend=FakeBackend(scale=0.0))
     tracker._scale_factor = 0.0
 
-    assert main.report_backend(tracker) == 1
+    assert report_backend(tracker) == 1
