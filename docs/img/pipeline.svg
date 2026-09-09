@@ -1,0 +1,94 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 560" width="1200" height="560" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Helvetica,Arial,sans-serif">
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#4fc3f7"/>
+    </marker>
+    <marker id="ag" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#00d474"/>
+    </marker>
+  </defs>
+  <rect width="1200" height="560" rx="14" fill="#1a1a2e"/>
+  <text x="44" y="50" fill="#ffffff" font-size="22" font-weight="700">One tick of the loop</text>
+  <text x="44" y="76" fill="#b0bacb" font-size="14">Runs every 20 ms in a daemon thread; the GUI only reads what it publishes.</text>
+
+  <!-- game band -->
+  <rect x="44" y="104" width="1112" height="46" rx="8" fill="#16213e" stroke="#2a2a4a"/>
+  <text x="600" y="133" fill="#4fc3f7" font-size="14" font-weight="700" text-anchor="middle">Roblox window — located by WindowTracker (Quartz), captured with mss</text>
+
+  <!-- stages -->
+  <g>
+    <rect x="44" y="196" width="208" height="164" rx="10" fill="#183b63" stroke="#2a4a72"/>
+    <text x="64" y="226" fill="#ffffff" font-size="15" font-weight="700">1 · Locate</text>
+    <text x="64" y="248" fill="#7fd4ff" font-size="11" font-family="Menlo,monospace">track_locator.py</text>
+    <text x="64" y="276" fill="#c8d0e2" font-size="11.5">Horizontal span from the</text>
+    <text x="64" y="292" fill="#c8d0e2" font-size="11.5">calibrated ROI, vertical</text>
+    <text x="64" y="308" fill="#c8d0e2" font-size="11.5">band refined per frame by</text>
+    <text x="64" y="324" fill="#c8d0e2" font-size="11.5">gradient runs — a stable</text>
+    <text x="64" y="340" fill="#c8d0e2" font-size="11.5">box, not just a likely one.</text>
+
+    <rect x="272" y="196" width="208" height="164" rx="10" fill="#183b63" stroke="#2a4a72"/>
+    <text x="292" y="226" fill="#ffffff" font-size="15" font-weight="700">2 · Read</text>
+    <text x="292" y="248" fill="#7fd4ff" font-size="11" font-family="Menlo,monospace">reel_vision.py</text>
+    <text x="292" y="276" fill="#c8d0e2" font-size="11.5">Bar and fish separated by</text>
+    <text x="292" y="292" fill="#c8d0e2" font-size="11.5">width, not colour: wide run</text>
+    <text x="292" y="308" fill="#c8d0e2" font-size="11.5">= bar, narrow stripe = fish.</text>
+    <text x="292" y="324" fill="#c8d0e2" font-size="11.5">Works on any rod without</text>
+    <text x="292" y="340" fill="#c8d0e2" font-size="11.5">HSV tuning.</text>
+
+    <rect x="500" y="196" width="208" height="164" rx="10" fill="#183b63" stroke="#2a4a72"/>
+    <text x="520" y="226" fill="#ffffff" font-size="15" font-weight="700">3 · Judge</text>
+    <text x="520" y="248" fill="#7fd4ff" font-size="11" font-family="Menlo,monospace">fight_estimator.py</text>
+    <text x="520" y="276" fill="#c8d0e2" font-size="11.5">Progress slope in vs out of</text>
+    <text x="520" y="292" fill="#c8d0e2" font-size="11.5">the bar gives this fish's</text>
+    <text x="520" y="308" fill="#c8d0e2" font-size="11.5">gain, loss and the on-target</text>
+    <text x="520" y="324" fill="#c8d0e2" font-size="11.5">fraction it demands — and</text>
+    <text x="520" y="340" fill="#c8d0e2" font-size="11.5">whether it is winnable.</text>
+
+    <rect x="728" y="196" width="208" height="164" rx="10" fill="#183b63" stroke="#2a4a72"/>
+    <text x="748" y="226" fill="#ffffff" font-size="15" font-weight="700">4 · Decide</text>
+    <text x="748" y="248" fill="#7fd4ff" font-size="11" font-family="Menlo,monospace">reel_controller.py</text>
+    <text x="748" y="276" fill="#c8d0e2" font-size="11.5">The bar is a double</text>
+    <text x="748" y="292" fill="#c8d0e2" font-size="11.5">integrator, so it aims at</text>
+    <text x="748" y="308" fill="#c8d0e2" font-size="11.5">the braking point and asks</text>
+    <text x="748" y="324" fill="#c8d0e2" font-size="11.5">for a duty cycle, realised</text>
+    <text x="748" y="340" fill="#c8d0e2" font-size="11.5">by a sigma-delta modulator.</text>
+
+    <rect x="956" y="196" width="200" height="164" rx="10" fill="#183b63" stroke="#2a4a72"/>
+    <text x="976" y="226" fill="#ffffff" font-size="15" font-weight="700">5 · Act</text>
+    <text x="976" y="248" fill="#7fd4ff" font-size="11" font-family="Menlo,monospace">controller.py</text>
+    <text x="976" y="276" fill="#c8d0e2" font-size="11.5">Hold or release, reasserted</text>
+    <text x="976" y="292" fill="#c8d0e2" font-size="11.5">every single tick. Nothing</text>
+    <text x="976" y="308" fill="#c8d0e2" font-size="11.5">may decline to act, or the</text>
+    <text x="976" y="324" fill="#c8d0e2" font-size="11.5">button latches down and the</text>
+    <text x="976" y="340" fill="#c8d0e2" font-size="11.5">bar drifts right.</text>
+  </g>
+
+  <!-- capture arrow down -->
+  <line x1="148" y1="150" x2="148" y2="192" stroke="#4fc3f7" stroke-width="2.5" marker-end="url(#a)"/>
+  <!-- between stages -->
+  <g stroke="#4fc3f7" stroke-width="2.5" marker-end="url(#a)">
+    <line x1="252" y1="278" x2="268" y2="278"/>
+    <line x1="480" y1="278" x2="496" y2="278"/>
+    <line x1="708" y1="278" x2="724" y2="278"/>
+    <line x1="936" y1="278" x2="952" y2="278"/>
+  </g>
+  <!-- feedback -->
+  <path d="M1056 360 V 420 H 148 V 150" fill="none" stroke="#00d474" stroke-width="2.5" stroke-dasharray="7 6" marker-end="url(#ag)"/>
+  <text x="600" y="412" fill="#00d474" font-size="12.5" text-anchor="middle">mouse down / up → the bar moves → next capture sees it</text>
+
+  <!-- footer boxes -->
+  <rect x="44" y="452" width="360" height="76" rx="10" fill="#16213e" stroke="#2a2a4a"/>
+  <text x="64" y="478" fill="#ffffff" font-size="13" font-weight="700">macro.py — state machine</text>
+  <text x="64" y="500" fill="#b0bacb" font-size="11.5">Owns the loop above and the cast/bite/shake/</text>
+  <text x="64" y="516" fill="#b0bacb" font-size="11.5">recast cycle around it. Checks the killswitch every tick.</text>
+
+  <rect x="420" y="452" width="360" height="76" rx="10" fill="#16213e" stroke="#2a2a4a"/>
+  <text x="440" y="478" fill="#ffffff" font-size="13" font-weight="700">config.py — settings &amp; rod profiles</text>
+  <text x="440" y="500" fill="#b0bacb" font-size="11.5">settings.json plus one JSON per rod in profiles/.</text>
+  <text x="440" y="516" fill="#b0bacb" font-size="11.5">Sliders retune the running controller in place.</text>
+
+  <rect x="796" y="452" width="360" height="76" rx="10" fill="#16213e" stroke="#2a2a4a"/>
+  <text x="816" y="478" fill="#ffffff" font-size="13" font-weight="700">fisch_physics.py — the game's rules</text>
+  <text x="816" y="500" fill="#b0bacb" font-size="11.5">Wiki constants, corrected where recordings</text>
+  <text x="816" y="516" fill="#b0bacb" font-size="11.5">disagreed. Stateless; imports nothing from the macro.</text>
+</svg>

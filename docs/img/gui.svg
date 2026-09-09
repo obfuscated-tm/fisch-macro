@@ -1,0 +1,197 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 800" width="1200" height="800" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Helvetica,Arial,sans-serif">
+  <defs>
+    <linearGradient id="pg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1a1a2e"/><stop offset="1" stop-color="#15152a"/>
+    </linearGradient>
+    <filter id="sh" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="6" stdDeviation="10" flood-color="#000" flood-opacity="0.45"/>
+    </filter>
+  </defs>
+  <rect width="1200" height="800" fill="#0e0e1c"/>
+
+  <!-- ================= CONTROL ================= -->
+  <g filter="url(#sh)">
+    <rect x="40" y="36" width="344" height="716" rx="12" fill="url(#pg)" stroke="#2a2a4a"/>
+  </g>
+  <rect x="40" y="36" width="344" height="40" rx="12" fill="#16213e"/>
+  <rect x="40" y="62" width="344" height="14" fill="#16213e"/>
+  <circle cx="60" cy="56" r="5" fill="#e94560"/><circle cx="76" cy="56" r="5" fill="#f5a623"/><circle cx="92" cy="56" r="5" fill="#00d474"/>
+  <text x="212" y="61" fill="#ffffff" font-size="12.5" font-weight="600" text-anchor="middle">Fisch Macro</text>
+  <!-- tabs -->
+  <rect x="40" y="76" width="344" height="30" fill="#16213e"/>
+  <rect x="52" y="80" width="76" height="26" rx="5" fill="#e94560"/>
+  <text x="90" y="97" fill="#ffffff" font-size="11.5" font-weight="600" text-anchor="middle">Control</text>
+  <text x="166" y="97" fill="#b0bacb" font-size="11.5" text-anchor="middle">Settings</text>
+  <text x="248" y="97" fill="#b0bacb" font-size="11.5" text-anchor="middle">Calibrate</text>
+  <text x="322" y="97" fill="#b0bacb" font-size="11.5" text-anchor="middle">Log</text>
+
+  <!-- status card -->
+  <rect x="52" y="118" width="320" height="66" rx="8" fill="#183b63"/>
+  <text x="74" y="162" font-size="26" fill="#f5a623">⏸</text>
+  <text x="112" y="148" fill="#ffffff" font-size="15" font-weight="700">Reeling</text>
+  <text x="112" y="166" fill="#b0bacb" font-size="11.5">Fish inside bar · progress 0.62</text>
+
+  <!-- live vision card -->
+  <rect x="52" y="194" width="320" height="222" rx="8" fill="#183b63"/>
+  <text x="68" y="216" fill="#ffffff" font-size="12" font-weight="700">👁 Live Vision</text>
+  <rect x="68" y="226" width="288" height="60" rx="4" fill="#0a0a14"/>
+  <rect x="80" y="244" width="264" height="22" rx="4" fill="#111a2e" stroke="#2c3660"/>
+  <rect x="168" y="247" width="86" height="16" rx="3" fill="#50ff50" opacity="0.9"/>
+  <rect x="214" y="240" width="4" height="30" fill="#ff0000"/>
+  <line x1="236" y1="240" x2="236" y2="270" stroke="#dcdc00" stroke-width="3" stroke-dasharray="5 4"/>
+  <rect x="80" y="272" width="264" height="6" rx="3" fill="#111a2e"/>
+  <rect x="81" y="273" width="164" height="4" rx="2" fill="#ff64ff"/>
+  <!-- key -->
+  <g font-size="8.5" fill="#b0bacb">
+    <rect x="68" y="294" width="12" height="4" fill="#ff0000"/><text x="86" y="299">Fish now</text>
+    <rect x="216" y="294" width="12" height="4" fill="#dcdc00"/><text x="234" y="299">Fish predicted</text>
+    <rect x="68" y="308" width="12" height="4" fill="#50ff50"/><text x="86" y="313">Bar — on target</text>
+    <rect x="216" y="308" width="12" height="4" fill="#ffdc50"/><text x="234" y="313">Bar — off target</text>
+    <rect x="68" y="322" width="12" height="4" fill="#ff78dc"/><text x="86" y="327">Bar aim</text>
+    <rect x="216" y="322" width="12" height="4" fill="#ff64ff"/><text x="234" y="327">Catch progress</text>
+  </g>
+  <rect x="68" y="336" width="288" height="70" rx="4" fill="#0a0a14"/>
+  <g font-family="Menlo,Consolas,monospace" font-size="9" fill="#a8d4ff">
+    <text x="78" y="350">State: Reeling</text>
+    <text x="78" y="363">Fish: 0.514  →  Predicted: 0.548</text>
+    <text x="78" y="376">Bar: 0.402–0.643  centre 0.522</text>
+    <text x="78" y="389">Progress: 0.62  peak 0.64  on-target ✓</text>
+    <text x="78" y="402">Action: HOLD  duty 0.61</text>
+  </g>
+
+  <!-- buttons -->
+  <rect x="52" y="428" width="320" height="46" rx="6" fill="#00d474"/>
+  <text x="212" y="457" fill="#ffffff" font-size="15" font-weight="700" text-anchor="middle">▶  START</text>
+  <rect x="52" y="482" width="320" height="34" rx="6" fill="#e94560"/>
+  <text x="212" y="504" fill="#ffffff" font-size="12.5" font-weight="700" text-anchor="middle">EMERGENCY STOP</text>
+
+  <!-- stats -->
+  <rect x="52" y="526" width="320" height="70" rx="8" fill="#183b63"/>
+  <g font-size="10.5" fill="#b0bacb" text-anchor="middle">
+    <text x="112" y="550">Caught</text><text x="192" y="550">Failed</text><text x="272" y="550">Casts</text><text x="340" y="550">Rate</text>
+  </g>
+  <g font-size="19" font-weight="700" fill="#ffffff" text-anchor="middle">
+    <text x="112" y="578">37</text><text x="192" y="578">4</text><text x="272" y="578">41</text>
+    <text x="340" y="578" fill="#00d474">90%</text>
+  </g>
+
+  <rect x="52" y="606" width="320" height="40" rx="8" fill="#183b63"/>
+  <text x="72" y="631" fill="#b0bacb" font-size="11.5">⏱ Session</text>
+  <text x="352" y="631" fill="#ffffff" font-size="12.5" font-family="Menlo,Consolas,monospace" text-anchor="end">01:12:48</text>
+
+  <rect x="52" y="656" width="320" height="40" rx="8" fill="#183b63"/>
+  <text x="72" y="681" fill="#b0bacb" font-size="11.5">🖥 Roblox Window</text>
+  <text x="352" y="681" fill="#00d474" font-size="11.5" text-anchor="end">1512 × 982</text>
+
+  <text x="212" y="726" fill="#7f89a3" font-size="11.5" text-anchor="middle">F6 starts and stops from inside the game</text>
+
+  <!-- ================= SETTINGS ================= -->
+  <g filter="url(#sh)">
+    <rect x="420" y="36" width="344" height="716" rx="12" fill="url(#pg)" stroke="#2a2a4a"/>
+  </g>
+  <rect x="420" y="36" width="344" height="40" rx="12" fill="#16213e"/>
+  <rect x="420" y="62" width="344" height="14" fill="#16213e"/>
+  <text x="592" y="61" fill="#ffffff" font-size="12.5" font-weight="600" text-anchor="middle">Fisch Macro</text>
+  <rect x="420" y="76" width="344" height="30" fill="#16213e"/>
+  <text x="470" y="97" fill="#b0bacb" font-size="11.5" text-anchor="middle">Control</text>
+  <rect x="510" y="80" width="76" height="26" rx="5" fill="#e94560"/>
+  <text x="548" y="97" fill="#ffffff" font-size="11.5" font-weight="600" text-anchor="middle">Settings</text>
+  <text x="628" y="97" fill="#b0bacb" font-size="11.5" text-anchor="middle">Calibrate</text>
+  <text x="702" y="97" fill="#b0bacb" font-size="11.5" text-anchor="middle">Log</text>
+
+  <rect x="420" y="106" width="344" height="646" fill="#eef1f5"/>
+  <g font-size="10" fill="#666f7d" font-weight="700" letter-spacing="1">
+    <text x="440" y="132">TIMING</text><text x="440" y="256">AUTOMATION</text><text x="440" y="322">REELING &amp; CONTROL</text><text x="440" y="536">CATCH DETECTION</text>
+  </g>
+  <g font-size="11.5" fill="#000000">
+    <text x="440" y="156">Cast Hold Time</text><text x="744" y="156" text-anchor="end" fill="#e94560" font-weight="700">0.7s</text>
+    <text x="440" y="196">Recast Delay</text><text x="744" y="196" text-anchor="end" fill="#e94560" font-weight="700">2.5s</text>
+    <text x="440" y="236">Scan Interval</text><text x="744" y="236" text-anchor="end" fill="#e94560" font-weight="700">20ms</text>
+    <text x="462" y="284">Auto Recast</text>
+    <text x="462" y="308">Auto Shake</text>
+    <text x="440" y="346">Steering Strength</text><text x="744" y="346" text-anchor="end" fill="#e94560" font-weight="700">10.0</text>
+    <text x="440" y="386">Steering Trim</text><text x="744" y="386" text-anchor="end" fill="#e94560" font-weight="700">0.6</text>
+    <text x="440" y="426">Neutral Hold</text><text x="744" y="426" text-anchor="end" fill="#e94560" font-weight="700">0.538</text>
+    <text x="440" y="466">Fish Lookahead</text><text x="744" y="466" text-anchor="end" fill="#e94560" font-weight="700">0.07s</text>
+    <text x="440" y="506">Bar Acceleration</text><text x="744" y="506" text-anchor="end" fill="#e94560" font-weight="700">1.00</text>
+    <text x="440" y="560">Min Catch Time</text><text x="744" y="560" text-anchor="end" fill="#e94560" font-weight="700">4.0s</text>
+    <text x="440" y="600">Finish Progress</text><text x="744" y="600" text-anchor="end" fill="#e94560" font-weight="700">0.99</text>
+  </g>
+  <g stroke="#c7cedb" stroke-width="4" stroke-linecap="round">
+    <line x1="440" y1="168" x2="744" y2="168"/><line x1="440" y1="208" x2="744" y2="208"/>
+    <line x1="440" y1="248" x2="744" y2="248"/><line x1="440" y1="358" x2="744" y2="358"/>
+    <line x1="440" y1="398" x2="744" y2="398"/><line x1="440" y1="438" x2="744" y2="438"/>
+    <line x1="440" y1="478" x2="744" y2="478"/><line x1="440" y1="518" x2="744" y2="518"/>
+    <line x1="440" y1="572" x2="744" y2="572"/><line x1="440" y1="612" x2="744" y2="612"/>
+  </g>
+  <g fill="#e94560">
+    <circle cx="486" cy="168" r="7"/><circle cx="592" cy="208" r="7"/><circle cx="440" cy="248" r="7"/>
+    <circle cx="552" cy="358" r="7"/><circle cx="500" cy="398" r="7"/><circle cx="614" cy="438" r="7"/>
+    <circle cx="525" cy="478" r="7"/><circle cx="546" cy="518" r="7"/><circle cx="574" cy="572" r="7"/><circle cx="713" cy="612" r="7"/>
+  </g>
+  <rect x="440" y="273" width="14" height="14" rx="3" fill="#e94560"/>
+  <path d="M443 280 l3 4 l6 -8" stroke="#fff" stroke-width="2" fill="none"/>
+  <rect x="440" y="297" width="14" height="14" rx="3" fill="#ffffff" stroke="#a8b0be"/>
+  <rect x="440" y="636" width="304" height="1" fill="#d3d9e3"/>
+  <text x="440" y="662" font-size="10" fill="#666f7d" font-weight="700" letter-spacing="1">HOTKEY</text>
+  <text x="440" y="690" font-size="11.5" fill="#000000">Start/Stop Key:</text>
+  <text x="540" y="690" font-size="13" fill="#e94560" font-weight="700">F6</text>
+  <rect x="676" y="674" width="68" height="24" rx="5" fill="#e94560"/>
+  <text x="710" y="691" font-size="11.5" fill="#ffffff" text-anchor="middle">Rebind</text>
+
+  <!-- ================= CALIBRATE ================= -->
+  <g filter="url(#sh)">
+    <rect x="800" y="36" width="344" height="716" rx="12" fill="url(#pg)" stroke="#2a2a4a"/>
+  </g>
+  <rect x="800" y="36" width="344" height="40" rx="12" fill="#16213e"/>
+  <rect x="800" y="62" width="344" height="14" fill="#16213e"/>
+  <text x="972" y="61" fill="#ffffff" font-size="12.5" font-weight="600" text-anchor="middle">Fisch Macro</text>
+  <rect x="800" y="76" width="344" height="30" fill="#16213e"/>
+  <text x="850" y="97" fill="#b0bacb" font-size="11.5" text-anchor="middle">Control</text>
+  <text x="926" y="97" fill="#b0bacb" font-size="11.5" text-anchor="middle">Settings</text>
+  <rect x="968" y="80" width="80" height="26" rx="5" fill="#e94560"/>
+  <text x="1008" y="97" fill="#ffffff" font-size="11.5" font-weight="600" text-anchor="middle">Calibrate</text>
+  <text x="1082" y="97" fill="#b0bacb" font-size="11.5" text-anchor="middle">Log</text>
+
+  <rect x="812" y="118" width="320" height="122" rx="8" fill="#183b63"/>
+  <text x="830" y="142" fill="#ffffff" font-size="13" font-weight="700">1  Rod profile</text>
+  <text x="830" y="164" fill="#b0bacb" font-size="10.5">One profile per rod, holding that rod's colours and</text>
+  <text x="830" y="178" fill="#b0bacb" font-size="10.5">the three regions below. Switching rods loads its</text>
+  <text x="830" y="192" fill="#b0bacb" font-size="10.5">saved calibration back.</text>
+  <rect x="830" y="204" width="176" height="26" rx="5" fill="#0d2848" stroke="#2a4a72"/>
+  <text x="842" y="221" fill="#ffffff" font-size="11.5">Daybreaker</text>
+  <text x="992" y="221" fill="#b0bacb" font-size="9">▾</text>
+  <rect x="1014" y="204" width="76" height="26" rx="5" fill="#16213e"/>
+  <text x="1052" y="221" fill="#ffffff" font-size="11" text-anchor="middle">＋ New rod</text>
+  <rect x="1098" y="204" width="26" height="26" rx="5" fill="#e94560"/>
+  <text x="1111" y="222" font-size="11" text-anchor="middle">🗑</text>
+
+  <rect x="812" y="250" width="320" height="140" rx="8" fill="#183b63"/>
+  <text x="830" y="274" fill="#ffffff" font-size="13" font-weight="700">2  Mark the regions</text>
+  <text x="830" y="296" fill="#b0bacb" font-size="10.5">Opens a full-screen snapshot. Click the fish and bar</text>
+  <text x="830" y="310" fill="#b0bacb" font-size="10.5">colours, then drag a box around each region and</text>
+  <text x="830" y="324" fill="#b0bacb" font-size="10.5">press Save &amp; Close. Roblox must be windowed with</text>
+  <text x="830" y="338" fill="#b0bacb" font-size="10.5">the minigame on screen.</text>
+  <rect x="830" y="350" width="284" height="30" rx="6" fill="#f5a623"/>
+  <text x="972" y="370" fill="#ffffff" font-size="12" font-weight="700" text-anchor="middle">👁  Open calibration overlay</text>
+
+  <rect x="812" y="400" width="320" height="248" rx="8" fill="#183b63"/>
+  <text x="830" y="424" fill="#ffffff" font-size="13" font-weight="700">3  Current calibration</text>
+  <rect x="830" y="436" width="284" height="130" rx="4" fill="#0a0a14"/>
+  <g font-family="Menlo,Consolas,monospace" font-size="9" fill="#a8d4ff">
+    <text x="842" y="454">rod          Daybreaker</text>
+    <text x="842" y="470">bar_roi      x 0.297–0.702</text>
+    <text x="842" y="486">             y 0.843–0.870</text>
+    <text x="842" y="502">progress_roi x 0.389–0.609</text>
+    <text x="842" y="518">             y 0.901–0.915</text>
+    <text x="842" y="534">shake_roi    full window</text>
+    <text x="842" y="550">fish HSV     90,60,50 → 130,122,150</text>
+  </g>
+  <text x="830" y="586" fill="#00d474" font-size="11" font-weight="700">✓ Saved — matches the profile on disk</text>
+  <rect x="830" y="600" width="196" height="30" rx="6" fill="#4fc3f7"/>
+  <text x="928" y="620" fill="#ffffff" font-size="12" font-weight="700" text-anchor="middle">💾  Save to rod</text>
+  <rect x="1034" y="600" width="80" height="30" rx="6" fill="#16213e"/>
+  <text x="1074" y="620" fill="#ffffff" font-size="12" text-anchor="middle">↩  Revert</text>
+
+  <text x="972" y="690" fill="#7f89a3" font-size="11.5" text-anchor="middle">Calibrate once per rod — it is stored and reloaded</text>
+</svg>
