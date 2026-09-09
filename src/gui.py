@@ -185,9 +185,49 @@ class MacroGUI:
 
     # ─── Style Configuration ──────────────────────────────────────
 
+    #: Button styles: (name, background, active background). Each carries white
+    #: text and clears WCAG AA's 4.5:1 against it, which the panel's own accent
+    #: shades did not -- START was #00d474 at 1.97:1 and the overlay button
+    #: #f5a623 at 2.03:1, both effectively unreadable once actually drawn.
+    BUTTON_STYLES = (
+        ("Start", "#0a7f4b", "#08693e"),      # START, while stopped
+        ("Stop", "#c62534", "#a81f2c"),       # ...and the same button running
+        ("Danger", "#c62534", "#a81f2c"),     # E-STOP, delete rod
+        ("Accent", "#b8253c", "#a01f34"),     # rebind hotkey
+        ("Amber", "#9a6300", "#815300"),      # open calibration overlay
+        ("Info", "#1565c0", "#11529c"),       # save to rod
+        ("Muted", "#16213e", "#2a2a4a"),      # new rod, revert, clear log
+    )
+
     def _configure_styles(self):
         """Configure ttk styles for a dark modern look."""
         s = self.style
+
+        # Buttons are ttk rather than tk because macOS draws a tk.Button itself
+        # and ignores the background it is given: every coloured button in this
+        # panel rendered as a plain white rectangle with white text on it.
+        # Captured under Tk 9.0.3, a tk.Button asking for #e94560 comes out
+        # white with or without a flat relief and no border, while the same
+        # colour on a clam-themed ttk button draws correctly -- clam paints the
+        # button rather than asking the system to, which also makes it look the
+        # same wherever the panel runs.
+        for name, background, active in self.BUTTON_STYLES:
+            s.configure(
+                f"{name}.TButton",
+                background=background,
+                foreground="#ffffff",
+                borderwidth=0,
+                focuscolor=background,
+                padding=(8, 6),
+                font=("Helvetica Neue", -11, "bold"),
+            )
+            s.map(
+                f"{name}.TButton",
+                background=[("active", active), ("pressed", active),
+                            ("disabled", COLORS["bg_secondary"])],
+                foreground=[("active", "#ffffff"), ("pressed", "#ffffff"),
+                            ("disabled", COLORS["text_dim"])],
+            )
 
         s.configure(".", background=COLORS["bg"], foreground=COLORS["text"])
         s.configure("TFrame", background=COLORS["bg"])
@@ -461,32 +501,20 @@ class MacroGUI:
         buttons = ttk.Frame(tab, style="TFrame")
         buttons.pack(fill=tk.X, padx=6, pady=(4, 3))
 
-        self.start_button = tk.Button(
+        self.start_button = ttk.Button(
             buttons,
             text="▶  START",
-            font=("Helvetica Neue", -13, "bold"),
-            bg=COLORS["accent_green"],
-            fg="#ffffff",
-            activebackground="#00b563",
-            activeforeground="#ffffff",
-            relief=tk.FLAT,
+            style="Start.TButton",
             cursor="hand2",
-            height=1,
             command=self._toggle_macro,
         )
         self.start_button.pack(side=tk.LEFT, fill=tk.X, expand=True)
 
-        self.kill_button = tk.Button(
+        self.kill_button = ttk.Button(
             buttons,
             text="■ E-STOP",
-            font=("Helvetica Neue", -11, "bold"),
-            bg=COLORS["danger"],
-            fg="#ffffff",
-            activebackground="#b83045",
-            activeforeground="#ffffff",
-            relief=tk.FLAT,
+            style="Danger.TButton",
             cursor="hand2",
-            height=1,
             command=self._emergency_stop,
         )
         self.kill_button.pack(side=tk.LEFT, padx=(6, 0))
@@ -648,10 +676,8 @@ class MacroGUI:
         ttk.Label(ks_frame, text="Start/Stop Key", style="Settings.TLabel").pack(
             side=tk.LEFT
         )
-        rebind_btn = tk.Button(
-            ks_frame, text="Rebind", font=("Helvetica Neue", -10),
-            bg=COLORS["accent"], fg="white", relief=tk.FLAT, cursor="hand2",
-            padx=8, pady=0,
+        rebind_btn = ttk.Button(
+            ks_frame, text="Rebind", style="Accent.TButton", cursor="hand2",
             command=self._rebind_killswitch,
         )
         rebind_btn.pack(side=tk.RIGHT)
@@ -940,28 +966,18 @@ class MacroGUI:
         self.profile_combo.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 6))
         self.profile_combo.bind("<<ComboboxSelected>>", self._on_profile_change)
 
-        tk.Button(
+        ttk.Button(
             selector,
             text="＋ New rod",
-            font=("Helvetica Neue", -10),
-            bg=COLORS["bg_secondary"],
-            fg=COLORS["text"],
-            activebackground=COLORS["border"],
-            activeforeground=COLORS["text"],
-            relief=tk.FLAT,
+            style="Muted.TButton",
             cursor="hand2",
             command=self._save_calibration_as_profile,
         ).pack(side=tk.LEFT, padx=(0, 6))
 
-        tk.Button(
+        ttk.Button(
             selector,
             text="🗑",
-            font=("Helvetica Neue", -10),
-            bg=COLORS["danger"],
-            fg="#ffffff",
-            activebackground="#c73a50",
-            activeforeground="#ffffff",
-            relief=tk.FLAT,
+            style="Danger.TButton",
             cursor="hand2",
             width=3,
             command=self._delete_profile,
@@ -979,15 +995,10 @@ class MacroGUI:
             justify=tk.LEFT,
         ).pack(anchor=tk.W, pady=(2, 6))
 
-        tk.Button(
+        ttk.Button(
             step2,
             text="👁  Open calibration overlay",
-            font=("Helvetica Neue", -11, "bold"),
-            bg=COLORS["accent_yellow"],
-            fg="#ffffff",
-            activebackground="#f5b853",
-            activeforeground="#ffffff",
-            relief=tk.FLAT,
+            style="Amber.TButton",
             cursor="hand2",
             command=self._interactive_calibrate,
         ).pack(fill=tk.X)
@@ -1024,29 +1035,19 @@ class MacroGUI:
         buttons = ttk.Frame(step3, style="Card.TFrame")
         buttons.pack(fill=tk.X, pady=(8, 0))
 
-        self.save_calibration_btn = tk.Button(
+        self.save_calibration_btn = ttk.Button(
             buttons,
             text="💾  Save to rod",
-            font=("Helvetica Neue", -11, "bold"),
-            bg=COLORS["accent_blue"],
-            fg="#ffffff",
-            activebackground="#3aa3d7",
-            activeforeground="#ffffff",
-            relief=tk.FLAT,
+            style="Info.TButton",
             cursor="hand2",
             command=self._save_calibration,
         )
         self.save_calibration_btn.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 6))
 
-        self.revert_calibration_btn = tk.Button(
+        self.revert_calibration_btn = ttk.Button(
             buttons,
             text="↩  Revert",
-            font=("Helvetica Neue", -11),
-            bg=COLORS["bg_secondary"],
-            fg=COLORS["text"],
-            activebackground=COLORS["border"],
-            activeforeground=COLORS["text"],
-            relief=tk.FLAT,
+            style="Muted.TButton",
             cursor="hand2",
             command=self._revert_calibration,
         )
@@ -1100,13 +1101,10 @@ class MacroGUI:
         log_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
 
         # Clear log button
-        clear_btn = tk.Button(
+        clear_btn = ttk.Button(
             tab,
             text="🗑  Clear Log",
-            font=("Helvetica Neue", -10),
-            bg=COLORS["bg_secondary"],
-            fg=COLORS["text_dim"],
-            relief=tk.FLAT,
+            style="Muted.TButton",
             cursor="hand2",
             command=self._clear_log,
         )
@@ -1120,11 +1118,7 @@ class MacroGUI:
             # Repaint first. The button used to change only after stop()
             # returned, and stop() waited on the worker thread, so pressing
             # Stop looked like nothing had happened for as long as that took.
-            self.start_button.config(
-                text="▶  START",
-                bg=COLORS["accent_green"],
-                activebackground="#00b563",
-            )
+            self.start_button.config(text="▶  START", style="Start.TButton")
             self.start_button.update_idletasks()
             self.engine.stop()
         else:
@@ -1148,11 +1142,7 @@ class MacroGUI:
             )
 
             self.engine.start()
-            self.start_button.config(
-                text="⏹  STOP",
-                bg=COLORS["danger"],
-                activebackground="#c73a50",
-            )
+            self.start_button.config(text="⏹  STOP", style="Stop.TButton")
 
     @staticmethod
     def _hotkey_keysym(key_name: str) -> str:
@@ -1342,8 +1332,14 @@ class MacroGUI:
                 out.append((label, "changed"))
         return out
 
-    def _calibration_readout_text(self, profile) -> str:
-        """The numbers the macro will actually use, as displayed text."""
+    def _calibration_readout_text(self) -> str:
+        """The numbers the macro will actually use, as displayed text.
+
+        Everything here comes from settings rather than the rod profile: the
+        profile's own calibration values were its HSV ranges and brightness
+        threshold, and those described a colour-matching reader the detector
+        does not have any more.
+        """
         lines = []
         for label, attr in self.CALIBRATION_REGIONS:
             roi = getattr(self.settings, attr)
@@ -1361,11 +1357,6 @@ class MacroGUI:
         if shift:
             lines.append(f"{'':<9}{shift.strip()}")
 
-        # The profile's HSV ranges used to be printed here. They described a
-        # colour-matching reader the detector no longer has, so the readout was
-        # reporting numbers that could not affect anything it did.
-        lines.append("")
-        lines.append(f"Brightness threshold  {profile.bar_brightness_threshold}")
         return "\n".join(lines)
 
     def _refresh_calibration_view(self):
@@ -1391,7 +1382,7 @@ class MacroGUI:
             self.calibration_readout.insert(tk.END, "No profile loaded.")
         else:
             self.calibration_readout.insert(
-                tk.END, self._calibration_readout_text(profile)
+                tk.END, self._calibration_readout_text()
             )
         self.calibration_readout.config(state=tk.DISABLED)
 
@@ -1662,11 +1653,7 @@ class MacroGUI:
 
     def _emergency_stop(self):
         """Stop the macro from the GUI without relying on global hotkeys."""
-        self.start_button.config(
-            text="▶  START",
-            bg=COLORS["accent_green"],
-            activebackground="#00b563",
-        )
+        self.start_button.config(text="▶  START", style="Start.TButton")
         self.start_button.update_idletasks()
         self.engine.stop()
         self._append_log("Emergency stop pressed")
@@ -1702,11 +1689,7 @@ class MacroGUI:
         self.status_label.config(text=state_name, foreground=color)
 
         if state_name == "Stopped":
-            self.start_button.config(
-                text="▶  START",
-                bg=COLORS["accent_green"],
-                activebackground="#00b563",
-            )
+            self.start_button.config(text="▶  START", style="Start.TButton")
             self.status_detail.config(text="Press Start to begin fishing")
 
         elif state_name == "Reeling":
