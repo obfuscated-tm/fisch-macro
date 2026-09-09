@@ -70,6 +70,16 @@ RECENT_WINDOW_SECONDS = 6.0
 DROP_TOLERANCE = 0.02       # absolute slack on top of loss_rate * dt
 BOOST_THRESHOLD = 0.015     # a rise this far beyond the gain bound is a boost
 
+# The recent trend is only worth reading once there is a run of frames behind
+# it. Two samples a tenth of a second apart is noise with a sign, and it used to
+# be enough to end a fight.
+MIN_RECENT_SAMPLES = 5
+MIN_RECENT_SPAN_SECONDS = 1.0
+
+# Coverage this high is as good as the fight can be fought. Progress falling
+# anyway says the progress reading is wrong, not that the fish is unwinnable.
+COVERAGE_TRUSTED = 0.9
+
 
 @dataclass
 class FightState:
@@ -362,18 +372,33 @@ class FightEstimator:
         if st.elapsed < grace_seconds:
             return "measuring"
 
+        need = st.required_on_target
+
+        # Progress falling while the bar is on the fish is not something the
+        # game does: on-target is the condition under which progress is gained.
+        # The two together mean the progress readings are not to be trusted --
+        # a mis-read row band gives a confidently wrong number, and holding the
+        # last good one only covers the frames that come back empty -- and an
+        # untrustworthy instrument is a reason to keep fishing, not to let go of
+        # a fish that by every other measure is being caught. Coverage is the
+        # cross-check because it is derived from progress *runs* rather than
+        # from any single reading, so one bad frame cannot manufacture it.
+        instrument_suspect = st.on_target_fraction >= COVERAGE_TRUSTED and (
+            need is None or st.on_target_fraction >= need
+        )
+
         # The decomposition into gain and loss needs sustained one-sided runs to
         # measure, and a fight being fought badly may not produce any -- which
         # is exactly when the verdict matters. The aggregate answers it without
         # them: progress going down over the whole fight means it is being lost,
         # whatever the component rates turn out to be.
-        recent_net = self._recent_net_rate()
-        if recent_net is not None and recent_net < 0:
-            return "lost"
-        if recent_net is None and st.net_rate is not None and st.net_rate < 0:
-            return "lost"
+        recent_net = self.recent_net_rate()
+        if not instrument_suspect:
+            if recent_net is not None and recent_net < 0:
+                return "lost"
+            if recent_net is None and st.net_rate is not None and st.net_rate < 0:
+                return "lost"
 
-        need = st.required_on_target
         if need is None:
             return "measuring"
         margin = st.on_target_fraction - need
@@ -383,12 +408,37 @@ class FightEstimator:
             return "struggling"
         return "lost"
 
-    def _recent_net_rate(self) -> Optional[float]:
-        """Progress per second across the recent window."""
-        if len(self._recent_progress) < 2:
+    def recent_net_rate(self) -> Optional[float]:
+        """Progress per second across the recent window, by least squares.
+
+        This used to be the difference between the two endpoint samples, which
+        put the whole verdict in the hands of two frames out of a hundred: one
+        bad reading at either end set the sign on its own. That is not a
+        hypothetical. A single spurious sample at the start of a fight -- the
+        kind :meth:`_account` already recognises and refuses to let near the
+        rates, since the drop back out of it is faster than the game can take
+        progress away -- sat at the head of the window and reported a fight
+        climbing cleanly at 3%/s as falling at 9%/s for the next six seconds.
+
+        A least-squares slope over every sample in the window puts that frame
+        in a minority of one. It is the same signal, read from all of the
+        evidence rather than the two ends of it.
+        """
+        samples = list(self._recent_progress)
+        if len(samples) < MIN_RECENT_SAMPLES:
             return None
-        (t0, p0), (t1, p1) = self._recent_progress[0], self._recent_progress[-1]
-        return (p1 - p0) / (t1 - t0) if t1 - t0 > 1e-6 else None
+        span = samples[-1][0] - samples[0][0]
+        if span < MIN_RECENT_SPAN_SECONDS:
+            # Too short to tell a trend from the quantisation step.
+            return None
+
+        t_mean = sum(t for t, _ in samples) / len(samples)
+        p_mean = sum(p for _, p in samples) / len(samples)
+        covariance = sum((t - t_mean) * (p - p_mean) for t, p in samples)
+        variance = sum((t - t_mean) ** 2 for t, _ in samples)
+        if variance <= 1e-9:
+            return None
+        return covariance / variance
 
     def stall_seconds(self, safety: float = 2.5, floor: float = 12.0) -> float:
         """How long to allow before treating a fight as stuck.
