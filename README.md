@@ -66,10 +66,10 @@ window's rectangle.
 | Linux / Wayland | not possible | see below |
 
 **Wayland cannot work.** Neither `mss` (capture) nor `pyautogui` (input) can
-reach another application's surface under a Wayland compositor, which is the
-default on Raspberry Pi OS. The macro detects a Wayland session and says so
-rather than failing with empty captures. Switch to X11 with `sudo raspi-config`
-→ Advanced Options → Wayland → X11, then log back in.
+reach another application's surface under a Wayland compositor, which many
+distributions now default to. The macro detects a Wayland session and says so
+rather than failing with empty captures. Log in to an X11 session instead — most
+display managers offer it as a choice on the login screen.
 
 ## Install
 
@@ -86,7 +86,7 @@ pip install -r requirements.txt
 The platform window-tracking packages (`pyobjc-framework-Quartz` on macOS,
 `python-xlib` on Linux) are declared with environment markers, so the right one
 installs automatically. The GUI needs `tkinter` — bundled with python.org and
-Homebrew builds; `sudo apt install python3-tk` on Debian/Ubuntu/Pi OS.
+Homebrew builds; `sudo apt install python3-tk` on Debian/Ubuntu.
 
 ## Run
 
@@ -113,8 +113,8 @@ An always-on-top control panel opens. Press **START** (or <kbd>F6</kbd> from any
 
 ### Headless
 
-The panel is 372x572 with a 340x500 minimum, so it does not fit a small screen
-— an 800x480 Pi display cannot show it at all. For those, run without it:
+The panel is 372x572 with a 340x500 minimum, so it does not fit a small screen,
+and on any screen it sits on top of the game. To run without it:
 
 ```bash
 python3 main.py --headless
@@ -123,7 +123,7 @@ python3 main.py --headless
 Same engine, same <kbd>F6</kbd>, state and stats to the console:
 
 ```
-[window] 800x480 at (0, 33), scale=1.0x
+[window] 1280x720 at (0, 33), scale=1.0x
 [macro] started
 [state] Reeling
 [stats] caught=12 failed=3 casts=15 rate=80% uptime=42m10s (17/hr)
@@ -160,22 +160,22 @@ Four profiles ship as examples: `default`, `Daybreaker`, `Castbound`, `Evil Pitc
 
 ROIs are stored as **fractions of the game window**, not screen pixels, so a
 profile survives moving the window or changing display. Two consequences worth
-knowing on a small screen:
+knowing on a small window:
 
 - **Calibrate with the window at the size you will run it.** Roblox mixes
   proportional and fixed-pixel offsets, so the bar's *fractional* position
-  shifts between 1080p and 800x480. Size the window first, then calibrate.
+  shifts with the window size. Size the window first, then calibrate.
 - **The progress ROI gets thin.** It spans about 1.4% of window height — some
   6 px at 480p against 15 at 1080p. That is near the floor for a reliable read
   and is usually what needs the most tuning.
 
-### On a Raspberry Pi
+### On a small screen
 
-There is no room for the calibration overlay on a 4" screen, so split it:
-calibrate on an external monitor with the game window sized to the Pi's
-resolution, then run `--headless` on the small display. Sober runs Roblox's
-Android client, whose fishing UI is laid out differently from the desktop
-one — expect to recalibrate rather than reuse a profile from a Mac or PC.
+There may be no room for the calibration overlay at all. Split it: calibrate on
+a larger monitor with the game window sized to the display you will run on, then
+run `--headless` there. Note that Sober runs Roblox's Android client, whose
+fishing UI is laid out differently from the desktop one — expect to recalibrate
+rather than reuse a profile from a Mac or PC.
 
 ---
 
@@ -289,12 +289,14 @@ defaults on first run, because a one-file build unpacks to a temp directory that
 is deleted on exit.
 
 Builds cannot be cross-compiled; each OS builds its own.
-[`.github/workflows/build.yml`](.github/workflows/build.yml) does all of them and
-attaches the artifacts to a release.
+[`.github/workflows/build.yml`](.github/workflows/build.yml) builds macOS (Apple
+silicon and Intel) and Windows, and attaches those to a release. There is no
+prebuilt Linux binary — run from a checkout, or build one locally with the
+command above.
 
 To cut a release, open the **build** workflow under the repository's Actions tab,
 choose **Run workflow**, and enter a version such as `1.2.0`. That one run builds
-all four artifacts, then creates the `v1.2.0` tag and the release from the commit
+all three artifacts, then creates the `v1.2.0` tag and the release from the commit
 it built, with notes generated from the commits since the last release. Pushing a
 `v*` tag by hand does the same thing. Leaving the version blank builds without
 releasing anything.

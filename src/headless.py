@@ -1,10 +1,10 @@
 """
 Headless runner — the macro without the tkinter panel.
 
-Built for a Raspberry Pi driving a 4" 800x480 display, where the control panel
-(372x572, minimum 340x500) simply does not fit and would cover half the game
-anyway. Calibrate on a normal monitor with the GUI, then run here: the ROIs are
-stored as fractions of the game window, so they carry over unchanged.
+For displays the control panel (372x572, minimum 340x500) does not fit, and for
+setups where it would cover half the game anyway. Calibrate with the GUI, then
+run here: the ROIs are stored as fractions of the game window, so they carry
+over unchanged.
 
 Everything the GUI drives is still driven — the same engine, the same global
 hotkey — with state changes and stats going to the console instead of widgets.

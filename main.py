@@ -77,7 +77,7 @@ def parse_args(argv=None):
         action="store_true",
         help=(
             "Run without the GUI, controlled by the global hotkey. For small "
-            "displays (e.g. a 800x480 Pi screen) where the panel does not fit."
+            "displays where the panel does not fit, or to keep it off the game."
         ),
     )
     parser.add_argument(

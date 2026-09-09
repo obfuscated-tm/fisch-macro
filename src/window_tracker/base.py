@@ -15,8 +15,8 @@ logger = logging.getLogger(__name__)
 
 
 # Window owner/title fragments that identify the game, matched
-# case-insensitively as substrings. "Sober" is the Linux Roblox client used
-# on the Raspberry Pi; "Vinegar" is its predecessor.
+# case-insensitively as substrings. "Sober" is the Linux Roblox client;
+# "Vinegar" is its predecessor.
 DEFAULT_APP_NAMES = ("Roblox", "Sober", "Vinegar")
 
 
