@@ -14,6 +14,7 @@ with the tuning parameters folded away behind their section headers.
 """
 
 import logging
+import sys
 import time
 import tkinter as tk
 from tkinter import ttk, messagebox, simpledialog
@@ -99,7 +100,15 @@ class MacroGUI:
         self.root.configure(bg=COLORS["bg"])
         self.root.attributes("-topmost", True)
 
-        # Try to set the window style
+        # Try to set the window style. Note this does not settle text size:
+        # every font in the panel is specified in pixels (a negative size)
+        # rather than points, which is what actually keeps the layout stable
+        # across Tk versions. Tk 8.6 on Aqua renders a point as a pixel, while
+        # Tk 9 converts at ~96dpi, so the same positive size comes out a third
+        # larger there -- the shipped .app bundles 8.6 and a Homebrew Python
+        # 3.14 checkout runs 9.0, and the two panels did not look alike.
+        # Setting the scaling factor does not fix it; measured, a size-10 font
+        # is 16px of linespace under Tk 9 at either scaling, and 12px at -10.
         try:
             self.root.tk.call("tk", "scaling", 1.0)
         except Exception:
@@ -125,7 +134,8 @@ class MacroGUI:
         self.engine.controller.on_hotkey(
             lambda: self.root.after(0, self._toggle_from_hotkey)
         )
-        self.root.bind_all("<KeyRelease-F6>", lambda _event: self._toggle_from_hotkey())
+        self._bound_keysym = None
+        self._bind_hotkey_key()
 
         # Auto-save setup
         self._setup_auto_save()
@@ -138,6 +148,9 @@ class MacroGUI:
 
         # Handle window close
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
+
+        # Last, so the log tab it writes to exists.
+        self._check_input_permission()
 
     def _setup_auto_save(self):
         """Add traces to all settings variables for automatic saving."""
@@ -191,7 +204,7 @@ class MacroGUI:
             foreground=COLORS["text_dim"],
             padding=[9, 4],
             borderwidth=0,
-            font=("Helvetica Neue", 10),
+            font=("Helvetica Neue", -10),
         )
         s.map(
             "TNotebook.Tab",
@@ -203,50 +216,50 @@ class MacroGUI:
             "TLabel",
             background=COLORS["bg"],
             foreground=COLORS["text"],
-            font=("Helvetica Neue", 11),
+            font=("Helvetica Neue", -11),
         )
         s.configure(
             "Header.TLabel",
-            font=("Helvetica Neue", 16, "bold"),
+            font=("Helvetica Neue", -16, "bold"),
             foreground=COLORS["text"],
         )
         s.configure(
             "Status.TLabel",
-            font=("Helvetica Neue", 12, "bold"),
+            font=("Helvetica Neue", -12, "bold"),
             foreground=COLORS["accent"],
         )
         s.configure(
             "Stat.TLabel",
-            font=("Menlo", 11),
+            font=("Menlo", -11),
             foreground=COLORS["accent_blue"],
         )
         s.configure(
             "Dim.TLabel",
-            font=("Helvetica Neue", 10),
+            font=("Helvetica Neue", -10),
             foreground=COLORS["text_dim"],
         )
         s.configure(
             "Card.TLabel",
             background=COLORS["bg_card"],
             foreground=COLORS["text"],
-            font=("Helvetica Neue", 11),
+            font=("Helvetica Neue", -11),
         )
         s.configure(
             "CardDim.TLabel",
             background=COLORS["bg_card"],
             foreground=COLORS["text_dim"],
-            font=("Helvetica Neue", 9),
+            font=("Helvetica Neue", -9),
         )
         s.configure(
             "CardStat.TLabel",
             background=COLORS["bg_card"],
             foreground=COLORS["accent_blue"],
-            font=("Menlo", 13, "bold"),
+            font=("Menlo", -13, "bold"),
         )
 
         s.configure(
             "Start.TButton",
-            font=("Helvetica Neue", 12, "bold"),
+            font=("Helvetica Neue", -12, "bold"),
             padding=[12, 6],
         )
         s.configure(
@@ -258,7 +271,7 @@ class MacroGUI:
             "TCheckbutton",
             background=COLORS["bg"],
             foreground=COLORS["text"],
-            font=("Helvetica Neue", 10),
+            font=("Helvetica Neue", -10),
         )
 
         # ── Settings panel — light card with black text ──
@@ -270,19 +283,19 @@ class MacroGUI:
             "Settings.TLabel",
             background=COLORS["settings_bg"],
             foreground=COLORS["settings_text"],
-            font=("Helvetica Neue", 11),
+            font=("Helvetica Neue", -11),
         )
         s.configure(
             "SettingsDim.TLabel",
             background=COLORS["settings_bg"],
             foreground=COLORS["settings_dim"],
-            font=("Helvetica Neue", 9, "bold"),
+            font=("Helvetica Neue", -9, "bold"),
         )
         s.configure(
             "SettingsStat.TLabel",
             background=COLORS["settings_bg"],
             foreground=COLORS["settings_text"],
-            font=("Menlo", 10),
+            font=("Menlo", -10),
         )
         s.configure(
             "Settings.TScale",
@@ -301,7 +314,7 @@ class MacroGUI:
             "Settings.TCheckbutton",
             background=COLORS["settings_bg"],
             foreground=COLORS["settings_text"],
-            font=("Helvetica Neue", 10),
+            font=("Helvetica Neue", -10),
         )
 
     # ─── Header ───────────────────────────────────────────────────
@@ -377,7 +390,7 @@ class MacroGUI:
 
         self.status_icon = ttk.Label(
             status_inner, text="⏸", style="Card.TLabel",
-            font=("Helvetica Neue", 19),
+            font=("Helvetica Neue", -19),
         )
         self.status_icon.pack(side=tk.LEFT, padx=(0, 8))
 
@@ -386,7 +399,7 @@ class MacroGUI:
 
         self.status_label = ttk.Label(
             status_text, text="Stopped", style="Card.TLabel",
-            font=("Helvetica Neue", 13, "bold"),
+            font=("Helvetica Neue", -13, "bold"),
         )
         self.status_label.pack(anchor=tk.W)
 
@@ -398,7 +411,7 @@ class MacroGUI:
 
         self.on_target_label = ttk.Label(
             status_text, text="",
-            style="Card.TLabel", font=("Helvetica Neue", 10, "bold")
+            style="Card.TLabel", font=("Helvetica Neue", -10, "bold")
         )
         self.on_target_label.pack(anchor=tk.W)
 
@@ -411,15 +424,18 @@ class MacroGUI:
             vision_inner,
             text="👁 Live Vision",
             style="Card.TLabel",
-            font=("Helvetica Neue", 10, "bold"),
+            font=("Helvetica Neue", -10, "bold"),
         ).pack(anchor=tk.W)
 
+        # height=3 is three *lines*, for the placeholder text. Tk reads the
+        # same option as three *pixels* once an image is showing, so it has to
+        # be cleared before the frame goes in — see _show_vision_image.
         self.vision_image_label = tk.Label(
             vision_inner,
             text="Start macro to see detection…",
             bg="#0a0a14",
             fg=COLORS["text"],
-            font=("Menlo", 9),
+            font=("Menlo", -9),
             height=3,
         )
         self.vision_image_label.pack(fill=tk.X)
@@ -432,7 +448,7 @@ class MacroGUI:
             width=1,
             bg="#0a0a14",
             fg="#a8d4ff",
-            font=("Menlo", 8),
+            font=("Menlo", -8),
             relief=tk.FLAT,
             wrap=tk.WORD,
             padx=4,
@@ -448,7 +464,7 @@ class MacroGUI:
         self.start_button = tk.Button(
             buttons,
             text="▶  START",
-            font=("Helvetica Neue", 13, "bold"),
+            font=("Helvetica Neue", -13, "bold"),
             bg=COLORS["accent_green"],
             fg="#ffffff",
             activebackground="#00b563",
@@ -463,7 +479,7 @@ class MacroGUI:
         self.kill_button = tk.Button(
             buttons,
             text="■ E-STOP",
-            font=("Helvetica Neue", 11, "bold"),
+            font=("Helvetica Neue", -11, "bold"),
             bg=COLORS["danger"],
             fg="#ffffff",
             activebackground="#b83045",
@@ -502,13 +518,13 @@ class MacroGUI:
         ttk.Label(footer, text="⏱", style="CardDim.TLabel").pack(side=tk.LEFT)
         self.session_time = ttk.Label(
             footer, text="00:00:00", style="Card.TLabel",
-            font=("Menlo", 11),
+            font=("Menlo", -11),
         )
         self.session_time.pack(side=tk.LEFT, padx=(4, 0))
 
         self.window_status = ttk.Label(
             footer, text="Searching...", style="Card.TLabel",
-            font=("Helvetica Neue", 10),
+            font=("Helvetica Neue", -10),
         )
         self.window_status.pack(side=tk.RIGHT)
         ttk.Label(footer, text="🖥", style="CardDim.TLabel").pack(
@@ -553,7 +569,7 @@ class MacroGUI:
                 cell,
                 text=label,
                 style="CardDim.TLabel",
-                font=("Helvetica Neue", 8),
+                font=("Helvetica Neue", -8),
             ).pack(side=tk.LEFT)
 
     # ─── Settings Tab ─────────────────────────────────────────────
@@ -633,7 +649,7 @@ class MacroGUI:
             side=tk.LEFT
         )
         rebind_btn = tk.Button(
-            ks_frame, text="Rebind", font=("Helvetica Neue", 10),
+            ks_frame, text="Rebind", font=("Helvetica Neue", -10),
             bg=COLORS["accent"], fg="white", relief=tk.FLAT, cursor="hand2",
             padx=8, pady=0,
             command=self._rebind_killswitch,
@@ -772,7 +788,7 @@ class MacroGUI:
             anchor=tk.W,
             bg=COLORS["settings_head"],
             fg=COLORS["settings_text"],
-            font=("Helvetica Neue", 11, "bold"),
+            font=("Helvetica Neue", -11, "bold"),
             padx=8,
             pady=4,
             cursor="hand2",
@@ -919,7 +935,7 @@ class MacroGUI:
             values=self.config.list_profiles(),
             state="readonly",
             width=14,
-            font=("Helvetica Neue", 10),
+            font=("Helvetica Neue", -10),
         )
         self.profile_combo.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 6))
         self.profile_combo.bind("<<ComboboxSelected>>", self._on_profile_change)
@@ -927,7 +943,7 @@ class MacroGUI:
         tk.Button(
             selector,
             text="＋ New rod",
-            font=("Helvetica Neue", 10),
+            font=("Helvetica Neue", -10),
             bg=COLORS["bg_secondary"],
             fg=COLORS["text"],
             activebackground=COLORS["border"],
@@ -940,7 +956,7 @@ class MacroGUI:
         tk.Button(
             selector,
             text="🗑",
-            font=("Helvetica Neue", 10),
+            font=("Helvetica Neue", -10),
             bg=COLORS["danger"],
             fg="#ffffff",
             activebackground="#c73a50",
@@ -966,7 +982,7 @@ class MacroGUI:
         tk.Button(
             step2,
             text="👁  Open calibration overlay",
-            font=("Helvetica Neue", 11, "bold"),
+            font=("Helvetica Neue", -11, "bold"),
             bg=COLORS["accent_yellow"],
             fg="#ffffff",
             activebackground="#f5b853",
@@ -985,7 +1001,7 @@ class MacroGUI:
             width=1,
             bg="#0a0a14",
             fg="#a8d4ff",
-            font=("Menlo", 9),
+            font=("Menlo", -9),
             relief=tk.FLAT,
             wrap=tk.NONE,
             padx=6,
@@ -999,7 +1015,7 @@ class MacroGUI:
             step3,
             text="",
             style="Card.TLabel",
-            font=("Helvetica Neue", 10, "bold"),
+            font=("Helvetica Neue", -10, "bold"),
             wraplength=290,
             justify=tk.LEFT,
         )
@@ -1011,7 +1027,7 @@ class MacroGUI:
         self.save_calibration_btn = tk.Button(
             buttons,
             text="💾  Save to rod",
-            font=("Helvetica Neue", 11, "bold"),
+            font=("Helvetica Neue", -11, "bold"),
             bg=COLORS["accent_blue"],
             fg="#ffffff",
             activebackground="#3aa3d7",
@@ -1025,7 +1041,7 @@ class MacroGUI:
         self.revert_calibration_btn = tk.Button(
             buttons,
             text="↩  Revert",
-            font=("Helvetica Neue", 11),
+            font=("Helvetica Neue", -11),
             bg=COLORS["bg_secondary"],
             fg=COLORS["text"],
             activebackground=COLORS["border"],
@@ -1048,7 +1064,7 @@ class MacroGUI:
 
         ttk.Label(
             inner, text=title, style="Card.TLabel",
-            font=("Helvetica Neue", 11, "bold"),
+            font=("Helvetica Neue", -11, "bold"),
         ).pack(anchor=tk.W)
         return inner
 
@@ -1067,7 +1083,7 @@ class MacroGUI:
             width=1,
             bg=COLORS["bg_secondary"],
             fg=COLORS["text"],
-            font=("Menlo", 9),
+            font=("Menlo", -9),
             relief=tk.FLAT,
             wrap=tk.WORD,
             state=tk.DISABLED,
@@ -1087,7 +1103,7 @@ class MacroGUI:
         clear_btn = tk.Button(
             tab,
             text="🗑  Clear Log",
-            font=("Helvetica Neue", 10),
+            font=("Helvetica Neue", -10),
             bg=COLORS["bg_secondary"],
             fg=COLORS["text_dim"],
             relief=tk.FLAT,
@@ -1137,6 +1153,106 @@ class MacroGUI:
                 bg=COLORS["danger"],
                 activebackground="#c73a50",
             )
+
+    @staticmethod
+    def _hotkey_keysym(key_name: str) -> str:
+        """Tk keysym for a configured hotkey name ('f8' → 'F8', 'esc' → 'Escape')."""
+        name = (key_name or "").strip().lower()
+        named = {
+            "esc": "Escape",
+            "escape": "Escape",
+            "space": "space",
+            "enter": "Return",
+            "return": "Return",
+            "tab": "Tab",
+            "backspace": "BackSpace",
+            "delete": "Delete",
+        }
+        if name in named:
+            return named[name]
+        if len(name) > 1 and name[0] == "f" and name[1:].isdigit():
+            return name.upper()
+        return name
+
+    def _bind_hotkey_key(self):
+        """Point the panel's own key binding at the configured hotkey.
+
+        This is the path that works while the panel has focus; the global
+        listener in Controller is the one that works from inside Roblox. The
+        binding used to be a hardcoded <KeyRelease-F6>, so rebinding the hotkey
+        moved the global listener and left the panel still answering to F6.
+        """
+        keysym = self._hotkey_keysym(self.settings.killswitch_key)
+        if keysym == self._bound_keysym:
+            return
+        if self._bound_keysym:
+            try:
+                self.root.unbind_all(f"<KeyRelease-{self._bound_keysym}>")
+            except Exception:
+                pass
+        if not keysym:
+            self._bound_keysym = None
+            return
+        try:
+            self.root.bind_all(
+                f"<KeyRelease-{keysym}>", lambda _event: self._toggle_from_hotkey()
+            )
+        except tk.TclError:
+            logger.warning("Tk could not bind the hotkey key %r", keysym)
+            self._bound_keysym = None
+            return
+        self._bound_keysym = keysym
+
+    def _check_input_permission(self):
+        """Warn when macOS will not let this process see or send input.
+
+        Without Accessibility, pynput's listener never receives a key — it logs
+        "This process is not trusted!" and nothing else — and pyautogui's clicks
+        go nowhere. The panel still looks and behaves completely normally, so
+        the only visible symptom is the hotkey doing nothing from inside the
+        game. A downloaded .app needs its own grant: the permission belongs to
+        the bundle's signature, not to the terminal that ran the checkout, and a
+        fresh build is a new signature even at the same path.
+        """
+        if sys.platform != "darwin":
+            return
+        try:
+            from ApplicationServices import AXIsProcessTrusted
+        except ImportError:
+            return
+        try:
+            trusted = bool(AXIsProcessTrusted())
+        except Exception:
+            return
+        if trusted:
+            return
+
+        key = self.settings.killswitch_key.upper()
+        self.header_killswitch_label.config(
+            text="⚠ No Accessibility", foreground=COLORS["warning"]
+        )
+        self._append_log(
+            f"⚠ Accessibility is not granted — {key} only works while this "
+            "panel has focus, and clicks will not reach Roblox."
+        )
+        self._append_log(
+            "Grant it in System Settings → Privacy & Security → Accessibility, "
+            "then restart. Remove and re-add the entry after an update."
+        )
+        self.root.after(
+            400,
+            lambda: messagebox.showwarning(
+                "Accessibility Permission Needed",
+                "macOS is not letting Fisch Macro see or send input.\n\n"
+                f"{key} will do nothing from inside Roblox, and the macro "
+                "cannot click.\n\n"
+                "System Settings → Privacy & Security → Accessibility, add "
+                "this app, then restart it. If it is already listed after an "
+                "update, remove the entry and add it again — the permission is "
+                "tied to the build it was granted to.",
+                parent=self.root,
+            ),
+        )
 
     def _toggle_from_hotkey(self):
         """Toggle the macro from F6/global hotkey on the Tk main thread.
@@ -1547,6 +1663,7 @@ class MacroGUI:
         self.settings.killswitch_key = key_name
         self.config.save_settings(self.settings)
         self.engine.controller.setup_killswitch(key_name)
+        self._bind_hotkey_key()
         self._refresh_killswitch_labels()
         self._append_log(f"Toggle hotkey rebound to {key_name.upper()}")
 
@@ -1670,18 +1787,14 @@ class MacroGUI:
                 # is from a fight that has already ended. Leaving it up made
                 # the bars look like a live reading of a bar that is not there.
                 if self._vision_photo is not None:
-                    self._vision_photo = None
-                    self.vision_image_label.config(
-                        image="", text="Start macro to see detection…"
-                    )
+                    self._show_vision_placeholder("Start macro to see detection…")
                     self._set_vision_telemetry("")
                 return
 
             snap = self.engine.get_vision_snapshot()
 
             if snap.frame_bgr is None:
-                self._vision_photo = None
-                self.vision_image_label.config(image="", text="Waiting for the reel ROI…")
+                self._show_vision_placeholder("Waiting for the reel ROI…")
             else:
                 rgb = cv2.cvtColor(snap.frame_bgr, cv2.COLOR_BGR2RGB)
                 pil = Image.fromarray(rgb)
@@ -1691,7 +1804,7 @@ class MacroGUI:
                 if pil.width != target_w or pil.height != target_h:
                     pil = pil.resize((target_w, target_h), Image.Resampling.LANCZOS)
                 self._vision_photo = ImageTk.PhotoImage(pil)
-                self.vision_image_label.config(image=self._vision_photo, text="")
+                self._show_vision_image(self._vision_photo)
 
             # Updated even with no frame: while hunting, the numbers are the
             # only thing there is to see, and holding the previous fight's
@@ -1699,6 +1812,24 @@ class MacroGUI:
             self._set_vision_telemetry("\n".join(snap.summary_lines()))
         except Exception as exc:
             logger.debug("Vision panel refresh failed: %s", exc)
+
+    def _show_vision_image(self, photo) -> None:
+        """Put a rendered frame on the vision label at its full height.
+
+        The label carries height=3 for its placeholder text, which Tk counts in
+        lines. With an image in the label it counts the same number in pixels
+        instead, so the panel asked for three pixels and cropped the frame to a
+        sliver across the middle of the reel track — the catch-progress strip
+        get_debug_frame pads onto the bottom was cut off entirely and looked
+        like it was never drawn. Clearing the option lets the image size the
+        label.
+        """
+        self.vision_image_label.config(image=photo, text="", height=0)
+
+    def _show_vision_placeholder(self, text: str) -> None:
+        """Drop back to the placeholder message, height in lines again."""
+        self._vision_photo = None
+        self.vision_image_label.config(image="", text=text, height=3)
 
     def _set_vision_telemetry(self, text: str) -> None:
         """Replace the telemetry readout text."""

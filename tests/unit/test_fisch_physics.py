@@ -105,6 +105,68 @@ def test_rejects_drops_faster_than_the_game_allows():
     assert st.rejected_frames == 1
 
 
+def test_one_bad_frame_does_not_lose_a_fight_that_is_being_won():
+    """The false abandon seen in the field, from the frame that caused it.
+
+    A single spurious reading at the head of the recent window used to set the
+    sign of the whole trend, and the trend alone ended the fight: a clean climb
+    at 3%/s with the bar on the fish every single frame reported -9%/s and a
+    verdict of "lost" four seconds in. The estimator had already flagged that
+    frame as impossible -- the drop back out of it is faster than the game can
+    take progress away -- which is what makes the verdict indefensible.
+    """
+    est = FightEstimator()
+    est.update(0.00, 0.55, True)              # one spurious reading
+    t = p = 0.0
+    for _ in range(89):                       # then a clean, on-target climb
+        t += 0.05
+        p += 0.03 * 0.05
+        st = est.update(t, p, True)
+
+    assert st.rejected_frames == 1            # the estimator saw it was bogus
+    assert st.on_target_fraction == pytest.approx(1.0)
+    assert est.recent_net_rate() > 0         # the trend survives the outlier
+    assert est.verdict() != "lost"
+
+
+def test_progress_falling_at_full_coverage_is_not_a_lost_fight():
+    """On-target and losing progress at once is a broken instrument.
+
+    The game gains progress precisely when the bar is on the fish, so the two
+    cannot both be true, and the field log shows the pair together: "on-target
+    100% against 62% needed". Reading that as an unwinnable fish throws away a
+    fish that by every other measure is being caught.
+
+    The contradiction is set on the state directly, because coverage is derived
+    from progress runs and so cannot be driven apart from progress by any input
+    -- and because with the trend now fitted across the window rather than its
+    two endpoints, no single bad frame reaches this state either. It is the
+    second line of defence, tested as one.
+    """
+    est = FightEstimator()
+    t, p = 0.0, 0.60
+    for _ in range(120):                      # a fight genuinely being lost
+        t += 0.05
+        p -= 0.02 * 0.05
+        est.update(t, p, True)
+    assert est.recent_net_rate() < 0
+    assert est.verdict() == "lost"            # still called, on its own merits
+
+    # Same estimator, same falling readings, with the coverage from the log
+    # put against them: the answer becomes "I cannot tell" rather than "give
+    # up", which is the only honest reading of a self-contradicting instrument.
+    est.state.on_target_fraction = 1.0
+    assert est.verdict() == "measuring"
+
+
+def test_a_short_burst_is_not_enough_to_call_a_trend():
+    """Two frames a tenth of a second apart are noise with a sign."""
+    est = FightEstimator()
+    est.update(0.00, 0.50, True)
+    est.update(0.05, 0.49, True)
+    assert est.recent_net_rate() is None
+
+
 def test_counts_a_slash_as_a_boost_not_as_the_rate():
     est = FightEstimator()
     est.update(0.00, 0.50, True)

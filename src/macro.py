@@ -1189,12 +1189,20 @@ class MacroEngine:
             ):
                 self._lost_fight_count += 1
                 if self._lost_fight_count >= settings.lost_fight_confirm_frames:
+                    # The recent trend is what the verdict actually turns on;
+                    # progress speed is derived from the gain rate and can
+                    # disagree with it, so a line carrying only the latter did
+                    # not explain the decision it was reporting.
+                    recent_net = self._estimator.recent_net_rate()
                     logger.info(
                         "Abandoning: on-target %.0f%% against %.0f%% needed "
-                        "(progress speed ~%+.0f%%)",
+                        "(progress speed ~%+.0f%%, recent trend %s, "
+                        "%d frames rejected)",
                         fight.on_target_fraction * 100.0,
                         (fight.required_on_target or 0.0) * 100.0,
                         fight.progress_speed or 0.0,
+                        "n/a" if recent_net is None else f"{recent_net * 100.0:+.0f}%/s",
+                        fight.rejected_frames,
                     )
                     self._finish_catch(result, settings, "Fight Lost")
                     return

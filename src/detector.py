@@ -148,6 +148,13 @@ class Detector:
     PROGRESS_MAX_BAND = 16
     PROGRESS_ROW_TOLERANCE = 2      # columns the bar's rows may disagree by
 
+    # How much better a different band has to read before the reader will move
+    # to it. The bar does not migrate up and down the strip during a fight, so
+    # a rival that is merely a shade more convincing on one frame is noise;
+    # only a decisively better one is the bar having actually moved (a window
+    # resize, a new fight). See _pick_progress_band.
+    PROGRESS_BAND_STICKINESS = 1.5
+
     def __init__(self, config_manager):
         self._config = config_manager
         self._mss = None           # lazy-initialised mss instance
@@ -163,6 +170,7 @@ class Detector:
         self._relocate_countdown = 0
         self._shake_countdown = 0
         self._last_progress = 0.0
+        self._progress_band = None      # rows the bar was read from last frame
 
     def reset_session(self) -> None:
         """Forget per-fight vision state. Call when a new minigame starts."""
@@ -173,6 +181,7 @@ class Detector:
         self._track_locator.reset()
         self._relocate_countdown = 0
         self._last_progress = 0.0
+        self._progress_band = None
 
     # ------------------------------------------------------------------
     # Window / monitor helpers
@@ -946,16 +955,56 @@ class Detector:
         candidates = self._progress_bands(progress_frame)
         candidates.append((0, progress_frame.shape[0]))
 
-        best = None
-        best_confidence = 0.0
+        reads = []
         for top, bottom in candidates:
             read = self._read_progress_band(progress_frame[top:bottom])
             if read is None:
                 continue
             fill, confidence = read
-            if confidence > best_confidence:
-                best_confidence, best = confidence, fill
-        return best
+            reads.append(((top, bottom), fill, confidence))
+        if not reads:
+            return None
+
+        band, fill = self._pick_progress_band(reads)
+        self._progress_band = band
+        return fill
+
+    def _pick_progress_band(self, reads: list) -> Tuple[Tuple[int, int], float]:
+        """Choose which band's reading to believe, preferring last frame's.
+
+        Confidence alone used to decide this, freshly every frame, and the two
+        or three bands that pass the presence tests are often separated by very
+        little. So the winner could alternate between the bar and a patch of
+        scenery from one frame to the next, and the loser's reading is not a
+        near-miss -- it is a fill fraction measured off something that is not
+        the bar, which arrives downstream as a confident wrong number. That is
+        what the estimator then had to be taught to survive: progress appearing
+        to collapse for a frame, on a fight that was going fine.
+
+        The bar does not move during a fight, so the band that was the bar last
+        frame is the bar this frame. It keeps the reading unless a rival reads
+        decisively better -- which is what happens when the bar really has moved
+        underneath us, on a window resize or a new fight, and the incumbent
+        stops looking like a bar at all.
+        """
+        best = max(reads, key=lambda r: r[2])
+        if self._progress_band is None:
+            return best[0], best[1]
+
+        incumbents = [r for r in reads if self._bands_overlap(r[0], self._progress_band)]
+        if not incumbents:
+            # Nothing where the bar was: it has genuinely gone.
+            return best[0], best[1]
+
+        held = max(incumbents, key=lambda r: r[2])
+        if best[2] > held[2] * self.PROGRESS_BAND_STICKINESS:
+            return best[0], best[1]
+        return held[0], held[1]
+
+    @staticmethod
+    def _bands_overlap(a: Tuple[int, int], b: Tuple[int, int]) -> bool:
+        """True when two row ranges share any row."""
+        return a[0] < b[1] and b[0] < a[1]
 
     def _read_progress_band(self, strip: np.ndarray) -> Optional[Tuple[float, float]]:
         """``(fill, confidence)`` for one candidate band, or None if it is not a bar.
