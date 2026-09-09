@@ -118,6 +118,7 @@ Same engine, same <kbd>F6</kbd>, state and stats to the console:
 | `--no-autostart` | Wait for the hotkey instead of starting at once |
 | `--profile NAME` | Switch rod profile before starting |
 | `--list-profiles` | Print available profiles and exit |
+| `--check-backend` | Report what the window tracker sees on this system, and exit |
 
 `tkinter` is imported lazily, so this runs on a machine without it.
 
@@ -285,9 +286,19 @@ macro does, not a defect in the build.
 
 ## Troubleshooting
 
+Start here — it exercises the real platform lookup and prints what it found:
+
+```console
+$ python3 main.py --check-backend
+backend:  macOS/Quartz
+window:   1512x882 at (0, 33)
+scale:    1.0x
+```
+
+
 | Symptom | Cause |
 |---|---|
-| "Cannot locate Roblox window" | Run Roblox windowed rather than fullscreen. On Linux check python-xlib or `xdotool` is present |
+| "Cannot locate Roblox window" | Run `python3 main.py --check-backend` first — it names the backend and says what it can see. Then check Roblox is windowed rather than fullscreen |
 | Linux: black captures, clicks do nothing | A Wayland session. Switch to X11 — see [Platforms](#platforms) |
 | Nothing clicks, hotkey dead | Accessibility permission not granted to the terminal/Python that launched it |
 | Live vision is blank or misaligned | Recalibrate step 4; then nudge **ROI Shift X/Y** in Settings |

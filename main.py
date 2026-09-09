@@ -90,7 +90,63 @@ def parse_args(argv=None):
         action="store_true",
         help="Print the available color profiles and exit.",
     )
+    parser.add_argument(
+        "--check-backend",
+        action="store_true",
+        help=(
+            "Report what the window tracker can see on this system and exit. "
+            "Use this first when the macro cannot find the game."
+        ),
+    )
     return parser.parse_args(argv)
+
+
+def report_backend(window_tracker) -> int:
+    """Print what the window-tracking backend can see.
+
+    Exercises the platform lookup for real — the Win32 window walk, the X11
+    `_NET_CLIENT_LIST` read — rather than merely importing it, which is the
+    difference between a build that packages and a build that works.
+
+    Args:
+        window_tracker: A constructed WindowTracker.
+
+    Returns:
+        0 if the platform has a backend and it answered without raising.
+        Not finding the game is not a failure; nothing may be running.
+    """
+    backend = window_tracker.backend
+    if backend is None:
+        print(
+            f"No window tracking backend for platform {sys.platform!r}. "
+            "The macro cannot locate the game window on this system.",
+            file=sys.stderr,
+        )
+        return 1
+
+    print(f"backend:  {backend.name}")
+
+    hint = backend.diagnostics()
+    if hint:
+        print(f"warning:  {hint}")
+
+    bounds = window_tracker.get_roblox_bounds()
+    if bounds is None:
+        print("window:   not found — is the game running, and windowed?")
+    else:
+        print(
+            f"window:   {bounds.width}x{bounds.height} "
+            f"at ({bounds.x}, {bounds.y})"
+        )
+
+    scale = window_tracker.get_scale_factor()
+    print(f"scale:    {scale}x")
+
+    if not scale > 0:
+        print(f"Implausible display scale factor: {scale}", file=sys.stderr)
+        return 1
+
+    return 0
 
 
 def main(argv=None):
@@ -101,9 +157,11 @@ def main(argv=None):
     # per-user data directory, seeded with the bundled profiles on first run.
     base_dir = resolve_base_dir()
 
-    # In headless mode the console carries the status output, so keep engine
-    # logging to the file and let only warnings through.
-    setup_logging(base_dir, logging.WARNING if args.headless else logging.INFO)
+    # In headless mode the console carries the status output, and --check-backend
+    # is meant to be readable at a glance, so keep engine logging to the file and
+    # let only warnings through.
+    quiet = args.headless or args.check_backend
+    setup_logging(base_dir, logging.WARNING if quiet else logging.INFO)
     logger = logging.getLogger("main")
     logger.info("Starting Fisch Macro...")
     logger.info("Data directory: %s", base_dir)
@@ -139,6 +197,9 @@ def main(argv=None):
 
         logger.info("Initializing window tracker...")
         window_tracker = WindowTracker()
+
+        if args.check_backend:
+            return report_backend(window_tracker)
 
         logger.info("Initializing detector...")
         detector = Detector(config_manager)
