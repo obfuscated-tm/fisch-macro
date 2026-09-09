@@ -13,13 +13,19 @@ No memory reading, no injection, no client patching. Just pixels in and mouse cl
 
 </div>
 
-<img src="docs/img/overlay.svg" alt="The reel track as the macro reads it: control bar, fish, predicted fish, aim marker and progress strip, with the overlay colour key" width="100%">
+<img src="docs/img/overlay-on-target.png" alt="The reel track in game above the macro's read of the same pixels: a green bracket around the control bar, a red marker on the fish inside it, a dashed yellow line at the fish's predicted position, and the catch progress strip below" width="100%">
+
+<sub><b>Top:</b> the reel track as the game draws it. <b>Bottom:</b> what the macro reads from those same pixels, column for column — a <b>green</b> bracket around the control bar, <b>red</b> on the fish inside it, a <b>dashed yellow</b> line where the fish is predicted to be next, and catch progress in <b>pink</b> underneath with the smoothed value ticked in white.</sub>
 
 ---
 
 ## Why it works when colour matching doesn't
 
 The minigame looks different for every rod — the bar renders white, dark red, or a rainbow gradient, the fish is tinted by the rod, and the track background is near-black over lava and muted purple over stone. So the macro reads **structure, not colour**: inside the track strip, the wide contiguous run of not-background is the control bar and the narrow stripe is the fish. That holds for any rod, with no HSV tuning.
+
+<img src="docs/img/overlay-off-target.png" alt="The same track with the bar off the fish: the bracket is amber, the red fish marker sits outside it, and the magenta aim marker is further right still" width="100%">
+
+<sub>Another moment in the same fight. The game has recoloured the control bar — a translucent brown wash here, a solid white block above — and reading it as the wide run of not-background finds it either way. The bracket is amber because the fish (red) has got outside the bar, and the aim marker (magenta, far right) is out past the fish: the controller steers at the point the bar will <i>stop</i>, not at the fish itself.</sub>
 
 The other half is control. The bar is a **double integrator** — holding accelerates it right, releasing accelerates it left, and there is no input that holds it still. Steering at where the fish *is* arrives at the fish going full speed and sails past it. So the controller aims at where the bar will stop once it has shed its velocity, and expresses "stay here" as a *duty cycle* — the fraction of ticks spent holding — realised with a sigma-delta modulator rather than plain on/off.
 
@@ -90,7 +96,18 @@ python3 main.py
 
 An always-on-top control panel opens. Press **START** (or <kbd>F6</kbd> from anywhere) to begin; **F6** again, the **EMERGENCY STOP** button, or a mouse flick to the top-left corner stops it and releases the button.
 
-<img src="docs/img/gui.svg" alt="The three main tabs of the control panel: Control with live vision and stats, Settings with the timing and control sliders, and Calibrate with the per-rod workflow" width="100%">
+<table>
+<tr>
+<td width="33%"><img src="docs/img/gui-control.png" alt="The Control tab: state, live vision with the overlay key, the telemetry readout, and the session counters"></td>
+<td width="33%"><img src="docs/img/gui-settings.png" alt="The Settings tab: the everyday fishing controls, with the Reeling &amp; Control section folded out"></td>
+<td width="33%"><img src="docs/img/gui-calibrate.png" alt="The Calibrate tab: the rod profile picker, the button that opens the calibration overlay, and the current calibration"></td>
+</tr>
+<tr>
+<td align="center"><sub><b>Control</b> — live vision and stats</sub></td>
+<td align="center"><sub><b>Settings</b> — retunes the running controller</sub></td>
+<td align="center"><sub><b>Calibrate</b> — one profile per rod</sub></td>
+</tr>
+</table>
 
 <sub>Logs stream to the **Log** tab and to `logs/macro.log`.</sub>
 
