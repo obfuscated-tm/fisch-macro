@@ -1,4 +1,4 @@
-"""The calibration toolbar's buttons have to be visible and readable.
+"""Every button in the app has to be visible and readable.
 
 Two separate ways they were not. macOS draws a tk.Button itself and ignores the
 background it is given, so buttons asking for the panel's accent colours came
@@ -20,9 +20,18 @@ import sys
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
+import pytest  # noqa: E402
+
+from src.gui import MacroGUI  # noqa: E402
 from src.interactive_calibrator import InteractiveCalibrator  # noqa: E402
 
-SOURCE = (ROOT / "src" / "interactive_calibrator.py").read_text()
+#: Both windows that build buttons, and the file each is defined in.
+WINDOWS = [
+    pytest.param(MacroGUI, "src/gui.py", id="control panel"),
+    pytest.param(
+        InteractiveCalibrator, "src/interactive_calibrator.py", id="calibration"
+    ),
+]
 
 #: WCAG 2.1 AA for text below 18pt.
 AA_CONTRAST = 4.5
@@ -45,10 +54,11 @@ def _contrast(foreground, background):
     return (lighter + 0.05) / (darker + 0.05)
 
 
-def test_every_button_colour_is_readable_with_white_text():
+@pytest.mark.parametrize("window, _source", WINDOWS)
+def test_every_button_colour_is_readable_with_white_text(window, _source):
     failures = [
         f"{name} {background} is {_contrast('#ffffff', background):.2f}:1"
-        for name, background, _active in InteractiveCalibrator.BUTTON_STYLES
+        for name, background, _active in window.BUTTON_STYLES
         if _contrast("#ffffff", background) < AA_CONTRAST
     ]
     assert not failures, (
@@ -57,10 +67,11 @@ def test_every_button_colour_is_readable_with_white_text():
     )
 
 
-def test_the_hover_colours_are_readable_too():
+@pytest.mark.parametrize("window, _source", WINDOWS)
+def test_the_hover_colours_are_readable_too(window, _source):
     failures = [
         f"{name} active {active} is {_contrast('#ffffff', active):.2f}:1"
-        for name, _background, active in InteractiveCalibrator.BUTTON_STYLES
+        for name, _background, active in window.BUTTON_STYLES
         if _contrast("#ffffff", active) < AA_CONTRAST
     ]
     assert not failures, "\n  ".join(failures)
@@ -83,11 +94,14 @@ def test_a_selected_step_is_darker_than_an_unselected_one():
         ), f"{base}On should be the darker shade"
 
 
-def test_the_toolbar_uses_ttk_buttons():
-    """A tk.Button here is a white rectangle on macOS, whatever colour it asks for."""
+@pytest.mark.parametrize("window, source", WINDOWS)
+def test_no_window_uses_a_plain_tk_button(window, source):
+    """A tk.Button is a white rectangle on macOS, whatever colour it asks for."""
+    text = (ROOT / source).read_text()
     # Anchored so it does not match the "tk.Button(" inside "ttk.Button(".
-    plain = re.findall(r"(?<!t)tk\.Button\(", SOURCE)
+    plain = re.findall(r"(?<!t)tk\.Button\(", text)
     assert not plain, (
-        "macOS ignores a tk.Button's background; use a clam-themed ttk.Button"
+        f"{source}: macOS ignores a tk.Button's background; "
+        "use a clam-themed ttk.Button"
     )
-    assert SOURCE.count("ttk.Button(") >= 4
+    assert text.count("ttk.Button(") >= 3

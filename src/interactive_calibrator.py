@@ -490,44 +490,17 @@ class InteractiveCalibrator(tk.Toplevel):
 
         if self.mode == "bar_roi":
             self.settings.bar_roi = roi
-            threshold = self._estimate_active_bar_threshold(rx, ry, rw, rh)
-            if threshold is not None:
-                self.profile.bar_brightness_threshold = threshold
         elif self.mode == "shake_roi":
             self.settings.shake_roi = roi
         elif self.mode == "progress_roi":
             self.settings.progress_roi = roi
 
-        extra = ""
-        if self.mode == "bar_roi":
-            extra = f"  ·  brightness threshold {self.profile.bar_brightness_threshold}"
         self.info_label.config(
             text=f"{label} set — x {roi.x_start * 100:.1f}–{roi.x_end * 100:.1f}%"
-                 f"  y {roi.y_start * 100:.1f}–{roi.y_end * 100:.1f}%{extra}"
+                 f"  y {roi.y_start * 100:.1f}–{roi.y_end * 100:.1f}%"
         )
         self.completed.add(self.mode)
         self._refresh_checklist()
-
-    def _estimate_active_bar_threshold(self, x, y, width, height):
-        """Estimate brightness threshold from the user-selected active bar ROI."""
-        px = int(x * self.scale_factor)
-        py = int(y * self.scale_factor)
-        pw = int(width * self.scale_factor)
-        ph = int(height * self.scale_factor)
-
-        frame_h, frame_w = self.raw_bgr.shape[:2]
-        px = max(0, min(px, frame_w - 1))
-        py = max(0, min(py, frame_h - 1))
-        pw = max(1, min(pw, frame_w - px))
-        ph = max(1, min(ph, frame_h - py))
-
-        roi_frame = self.raw_bgr[py:py + ph, px:px + pw]
-        if roi_frame.size == 0:
-            return None
-
-        gray = cv2.cvtColor(roi_frame, cv2.COLOR_BGR2GRAY)
-        mean_brightness = float(np.mean(gray))
-        return int(np.clip(mean_brightness + 35, 50, 180))
 
     def _save_and_close(self):
         """Write both the working regions and the rod profile, then close.
