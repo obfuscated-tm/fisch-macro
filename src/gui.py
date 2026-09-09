@@ -100,7 +100,15 @@ class MacroGUI:
         self.root.configure(bg=COLORS["bg"])
         self.root.attributes("-topmost", True)
 
-        # Try to set the window style
+        # Try to set the window style. Note this does not settle text size:
+        # every font in the panel is specified in pixels (a negative size)
+        # rather than points, which is what actually keeps the layout stable
+        # across Tk versions. Tk 8.6 on Aqua renders a point as a pixel, while
+        # Tk 9 converts at ~96dpi, so the same positive size comes out a third
+        # larger there -- the shipped .app bundles 8.6 and a Homebrew Python
+        # 3.14 checkout runs 9.0, and the two panels did not look alike.
+        # Setting the scaling factor does not fix it; measured, a size-10 font
+        # is 16px of linespace under Tk 9 at either scaling, and 12px at -10.
         try:
             self.root.tk.call("tk", "scaling", 1.0)
         except Exception:
@@ -196,7 +204,7 @@ class MacroGUI:
             foreground=COLORS["text_dim"],
             padding=[9, 4],
             borderwidth=0,
-            font=("Helvetica Neue", 10),
+            font=("Helvetica Neue", -10),
         )
         s.map(
             "TNotebook.Tab",
@@ -208,50 +216,50 @@ class MacroGUI:
             "TLabel",
             background=COLORS["bg"],
             foreground=COLORS["text"],
-            font=("Helvetica Neue", 11),
+            font=("Helvetica Neue", -11),
         )
         s.configure(
             "Header.TLabel",
-            font=("Helvetica Neue", 16, "bold"),
+            font=("Helvetica Neue", -16, "bold"),
             foreground=COLORS["text"],
         )
         s.configure(
             "Status.TLabel",
-            font=("Helvetica Neue", 12, "bold"),
+            font=("Helvetica Neue", -12, "bold"),
             foreground=COLORS["accent"],
         )
         s.configure(
             "Stat.TLabel",
-            font=("Menlo", 11),
+            font=("Menlo", -11),
             foreground=COLORS["accent_blue"],
         )
         s.configure(
             "Dim.TLabel",
-            font=("Helvetica Neue", 10),
+            font=("Helvetica Neue", -10),
             foreground=COLORS["text_dim"],
         )
         s.configure(
             "Card.TLabel",
             background=COLORS["bg_card"],
             foreground=COLORS["text"],
-            font=("Helvetica Neue", 11),
+            font=("Helvetica Neue", -11),
         )
         s.configure(
             "CardDim.TLabel",
             background=COLORS["bg_card"],
             foreground=COLORS["text_dim"],
-            font=("Helvetica Neue", 9),
+            font=("Helvetica Neue", -9),
         )
         s.configure(
             "CardStat.TLabel",
             background=COLORS["bg_card"],
             foreground=COLORS["accent_blue"],
-            font=("Menlo", 13, "bold"),
+            font=("Menlo", -13, "bold"),
         )
 
         s.configure(
             "Start.TButton",
-            font=("Helvetica Neue", 12, "bold"),
+            font=("Helvetica Neue", -12, "bold"),
             padding=[12, 6],
         )
         s.configure(
@@ -263,7 +271,7 @@ class MacroGUI:
             "TCheckbutton",
             background=COLORS["bg"],
             foreground=COLORS["text"],
-            font=("Helvetica Neue", 10),
+            font=("Helvetica Neue", -10),
         )
 
         # ── Settings panel — light card with black text ──
@@ -275,19 +283,19 @@ class MacroGUI:
             "Settings.TLabel",
             background=COLORS["settings_bg"],
             foreground=COLORS["settings_text"],
-            font=("Helvetica Neue", 11),
+            font=("Helvetica Neue", -11),
         )
         s.configure(
             "SettingsDim.TLabel",
             background=COLORS["settings_bg"],
             foreground=COLORS["settings_dim"],
-            font=("Helvetica Neue", 9, "bold"),
+            font=("Helvetica Neue", -9, "bold"),
         )
         s.configure(
             "SettingsStat.TLabel",
             background=COLORS["settings_bg"],
             foreground=COLORS["settings_text"],
-            font=("Menlo", 10),
+            font=("Menlo", -10),
         )
         s.configure(
             "Settings.TScale",
@@ -306,7 +314,7 @@ class MacroGUI:
             "Settings.TCheckbutton",
             background=COLORS["settings_bg"],
             foreground=COLORS["settings_text"],
-            font=("Helvetica Neue", 10),
+            font=("Helvetica Neue", -10),
         )
 
     # ─── Header ───────────────────────────────────────────────────
@@ -382,7 +390,7 @@ class MacroGUI:
 
         self.status_icon = ttk.Label(
             status_inner, text="⏸", style="Card.TLabel",
-            font=("Helvetica Neue", 19),
+            font=("Helvetica Neue", -19),
         )
         self.status_icon.pack(side=tk.LEFT, padx=(0, 8))
 
@@ -391,7 +399,7 @@ class MacroGUI:
 
         self.status_label = ttk.Label(
             status_text, text="Stopped", style="Card.TLabel",
-            font=("Helvetica Neue", 13, "bold"),
+            font=("Helvetica Neue", -13, "bold"),
         )
         self.status_label.pack(anchor=tk.W)
 
@@ -403,7 +411,7 @@ class MacroGUI:
 
         self.on_target_label = ttk.Label(
             status_text, text="",
-            style="Card.TLabel", font=("Helvetica Neue", 10, "bold")
+            style="Card.TLabel", font=("Helvetica Neue", -10, "bold")
         )
         self.on_target_label.pack(anchor=tk.W)
 
@@ -416,7 +424,7 @@ class MacroGUI:
             vision_inner,
             text="👁 Live Vision",
             style="Card.TLabel",
-            font=("Helvetica Neue", 10, "bold"),
+            font=("Helvetica Neue", -10, "bold"),
         ).pack(anchor=tk.W)
 
         # height=3 is three *lines*, for the placeholder text. Tk reads the
@@ -427,7 +435,7 @@ class MacroGUI:
             text="Start macro to see detection…",
             bg="#0a0a14",
             fg=COLORS["text"],
-            font=("Menlo", 9),
+            font=("Menlo", -9),
             height=3,
         )
         self.vision_image_label.pack(fill=tk.X)
@@ -440,7 +448,7 @@ class MacroGUI:
             width=1,
             bg="#0a0a14",
             fg="#a8d4ff",
-            font=("Menlo", 8),
+            font=("Menlo", -8),
             relief=tk.FLAT,
             wrap=tk.WORD,
             padx=4,
@@ -456,7 +464,7 @@ class MacroGUI:
         self.start_button = tk.Button(
             buttons,
             text="▶  START",
-            font=("Helvetica Neue", 13, "bold"),
+            font=("Helvetica Neue", -13, "bold"),
             bg=COLORS["accent_green"],
             fg="#ffffff",
             activebackground="#00b563",
@@ -471,7 +479,7 @@ class MacroGUI:
         self.kill_button = tk.Button(
             buttons,
             text="■ E-STOP",
-            font=("Helvetica Neue", 11, "bold"),
+            font=("Helvetica Neue", -11, "bold"),
             bg=COLORS["danger"],
             fg="#ffffff",
             activebackground="#b83045",
@@ -510,13 +518,13 @@ class MacroGUI:
         ttk.Label(footer, text="⏱", style="CardDim.TLabel").pack(side=tk.LEFT)
         self.session_time = ttk.Label(
             footer, text="00:00:00", style="Card.TLabel",
-            font=("Menlo", 11),
+            font=("Menlo", -11),
         )
         self.session_time.pack(side=tk.LEFT, padx=(4, 0))
 
         self.window_status = ttk.Label(
             footer, text="Searching...", style="Card.TLabel",
-            font=("Helvetica Neue", 10),
+            font=("Helvetica Neue", -10),
         )
         self.window_status.pack(side=tk.RIGHT)
         ttk.Label(footer, text="🖥", style="CardDim.TLabel").pack(
@@ -561,7 +569,7 @@ class MacroGUI:
                 cell,
                 text=label,
                 style="CardDim.TLabel",
-                font=("Helvetica Neue", 8),
+                font=("Helvetica Neue", -8),
             ).pack(side=tk.LEFT)
 
     # ─── Settings Tab ─────────────────────────────────────────────
@@ -641,7 +649,7 @@ class MacroGUI:
             side=tk.LEFT
         )
         rebind_btn = tk.Button(
-            ks_frame, text="Rebind", font=("Helvetica Neue", 10),
+            ks_frame, text="Rebind", font=("Helvetica Neue", -10),
             bg=COLORS["accent"], fg="white", relief=tk.FLAT, cursor="hand2",
             padx=8, pady=0,
             command=self._rebind_killswitch,
@@ -780,7 +788,7 @@ class MacroGUI:
             anchor=tk.W,
             bg=COLORS["settings_head"],
             fg=COLORS["settings_text"],
-            font=("Helvetica Neue", 11, "bold"),
+            font=("Helvetica Neue", -11, "bold"),
             padx=8,
             pady=4,
             cursor="hand2",
@@ -927,7 +935,7 @@ class MacroGUI:
             values=self.config.list_profiles(),
             state="readonly",
             width=14,
-            font=("Helvetica Neue", 10),
+            font=("Helvetica Neue", -10),
         )
         self.profile_combo.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 6))
         self.profile_combo.bind("<<ComboboxSelected>>", self._on_profile_change)
@@ -935,7 +943,7 @@ class MacroGUI:
         tk.Button(
             selector,
             text="＋ New rod",
-            font=("Helvetica Neue", 10),
+            font=("Helvetica Neue", -10),
             bg=COLORS["bg_secondary"],
             fg=COLORS["text"],
             activebackground=COLORS["border"],
@@ -948,7 +956,7 @@ class MacroGUI:
         tk.Button(
             selector,
             text="🗑",
-            font=("Helvetica Neue", 10),
+            font=("Helvetica Neue", -10),
             bg=COLORS["danger"],
             fg="#ffffff",
             activebackground="#c73a50",
@@ -974,7 +982,7 @@ class MacroGUI:
         tk.Button(
             step2,
             text="👁  Open calibration overlay",
-            font=("Helvetica Neue", 11, "bold"),
+            font=("Helvetica Neue", -11, "bold"),
             bg=COLORS["accent_yellow"],
             fg="#ffffff",
             activebackground="#f5b853",
@@ -993,7 +1001,7 @@ class MacroGUI:
             width=1,
             bg="#0a0a14",
             fg="#a8d4ff",
-            font=("Menlo", 9),
+            font=("Menlo", -9),
             relief=tk.FLAT,
             wrap=tk.NONE,
             padx=6,
@@ -1007,7 +1015,7 @@ class MacroGUI:
             step3,
             text="",
             style="Card.TLabel",
-            font=("Helvetica Neue", 10, "bold"),
+            font=("Helvetica Neue", -10, "bold"),
             wraplength=290,
             justify=tk.LEFT,
         )
@@ -1019,7 +1027,7 @@ class MacroGUI:
         self.save_calibration_btn = tk.Button(
             buttons,
             text="💾  Save to rod",
-            font=("Helvetica Neue", 11, "bold"),
+            font=("Helvetica Neue", -11, "bold"),
             bg=COLORS["accent_blue"],
             fg="#ffffff",
             activebackground="#3aa3d7",
@@ -1033,7 +1041,7 @@ class MacroGUI:
         self.revert_calibration_btn = tk.Button(
             buttons,
             text="↩  Revert",
-            font=("Helvetica Neue", 11),
+            font=("Helvetica Neue", -11),
             bg=COLORS["bg_secondary"],
             fg=COLORS["text"],
             activebackground=COLORS["border"],
@@ -1056,7 +1064,7 @@ class MacroGUI:
 
         ttk.Label(
             inner, text=title, style="Card.TLabel",
-            font=("Helvetica Neue", 11, "bold"),
+            font=("Helvetica Neue", -11, "bold"),
         ).pack(anchor=tk.W)
         return inner
 
@@ -1075,7 +1083,7 @@ class MacroGUI:
             width=1,
             bg=COLORS["bg_secondary"],
             fg=COLORS["text"],
-            font=("Menlo", 9),
+            font=("Menlo", -9),
             relief=tk.FLAT,
             wrap=tk.WORD,
             state=tk.DISABLED,
@@ -1095,7 +1103,7 @@ class MacroGUI:
         clear_btn = tk.Button(
             tab,
             text="🗑  Clear Log",
-            font=("Helvetica Neue", 10),
+            font=("Helvetica Neue", -10),
             bg=COLORS["bg_secondary"],
             fg=COLORS["text_dim"],
             relief=tk.FLAT,

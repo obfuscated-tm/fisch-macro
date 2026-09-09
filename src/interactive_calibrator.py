@@ -187,7 +187,7 @@ class InteractiveCalibrator(tk.Toplevel):
             self.toolbar,
             text=f"Calibrating rod:  {self.profile.name}",
             fg=COLORS["accent_blue"], bg=COLORS["bg_card"],
-            font=("Helvetica Neue", 12),
+            font=("Helvetica Neue", -12),
         ).pack(side=tk.TOP, pady=(8, 0), padx=20)
 
         # Instruction Label
@@ -195,7 +195,7 @@ class InteractiveCalibrator(tk.Toplevel):
             self.toolbar,
             text="Pick a step below. Work through 1–6, then press Save & Close.",
             fg=COLORS["text"], bg=COLORS["bg_card"],
-            font=("Helvetica Neue", 16, "bold")
+            font=("Helvetica Neue", -16, "bold")
         )
         self.instruction_label.pack(side=tk.TOP, pady=(4, 6), padx=20)
 
@@ -206,7 +206,7 @@ class InteractiveCalibrator(tk.Toplevel):
         for mode, label, _hint in self.STEPS:
             colour = COLORS["accent"] if mode.endswith("_color") else COLORS["accent_blue"]
             btn = tk.Button(
-                btn_frame, text=label, font=("Helvetica Neue", 12),
+                btn_frame, text=label, font=("Helvetica Neue", -12),
                 bg=colour, fg="white", cursor="hand2",
                 highlightbackground=COLORS["bg_card"],
                 command=lambda m=mode: self._set_mode(m),
@@ -218,31 +218,31 @@ class InteractiveCalibrator(tk.Toplevel):
         action_frame.pack(side=tk.TOP, pady=(0, 8), padx=10)
 
         tk.Button(
-            action_frame, text="Retake screenshot", font=("Helvetica Neue", 12),
+            action_frame, text="Retake screenshot", font=("Helvetica Neue", -12),
             bg="#5c6bc0", fg="white", cursor="hand2", command=self._retake_screenshot
         ).pack(side=tk.LEFT, padx=3)
 
         tk.Button(
-            action_frame, text="✓ Save & Close", font=("Helvetica Neue", 12, "bold"),
+            action_frame, text="✓ Save & Close", font=("Helvetica Neue", -12, "bold"),
             bg="#28a745", fg="white", cursor="hand2", command=self._save_and_close
         ).pack(side=tk.LEFT, padx=3)
 
         tk.Button(
-            action_frame, text="✕ Cancel", font=("Helvetica Neue", 12),
+            action_frame, text="✕ Cancel", font=("Helvetica Neue", -12),
             bg="#dc3545", fg="white", cursor="hand2", command=self._cancel
         ).pack(side=tk.LEFT, padx=3)
 
         # Checklist: what this session has changed, and what is still untouched.
         self.checklist_label = tk.Label(
             self.toolbar, text="", fg="#a0aabf", bg=COLORS["bg_card"],
-            font=("Menlo", 11),
+            font=("Menlo", -11),
         )
         self.checklist_label.pack(side=tk.TOP, pady=(0, 4))
 
         # Info readout
         self.info_label = tk.Label(
             self.toolbar, text="", fg=COLORS["accent_green"], bg=COLORS["bg_card"],
-            font=("Helvetica Neue", 12)
+            font=("Helvetica Neue", -12)
         )
         self.info_label.pack(side=tk.TOP, pady=(0, 8))
 
@@ -257,7 +257,7 @@ class InteractiveCalibrator(tk.Toplevel):
             self.buttons[mode].config(
                 text=("✓ " if done else "") + label,
                 relief=tk.SUNKEN if mode == self.mode else tk.RAISED,
-                font=("Helvetica Neue", 12, "bold") if mode == self.mode
+                font=("Helvetica Neue", -12, "bold") if mode == self.mode
                 else ("Helvetica Neue", 12),
             )
         self.checklist_label.config(text="   ".join(marks))
