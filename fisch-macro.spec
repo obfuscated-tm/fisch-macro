@@ -6,7 +6,7 @@ Build with:  pyinstaller fisch-macro.spec --noconfirm
 
 Produces a one-directory build (not one-file): a one-file build re-extracts
 ~200 MB to a temp directory on every launch, which is slow everywhere and
-painful on a Pi's SD card.
+worse on a slow disk.
 
 On Windows two executables are produced from one shared collection — a
 windowed one for the GUI, and a console one, because a windowed Windows binary

@@ -183,58 +183,8 @@ jobs:
           path: FischMacro-${{ matrix.artifact }}.zip
           if-no-files-found: error
 
-  # Built inside a Debian bookworm container rather than on the runner's own
-  # Ubuntu 24.04: glibc is forward- but not backward-compatible, and a binary
-  # linked against Ubuntu's 2.39 will not start on Raspberry Pi OS bookworm
-  # (2.36). Building against the older glibc covers both.
-  build-linux-arm64:
-    needs: [test, resolve]
-    runs-on: ubuntu-24.04-arm
-    container: debian:bookworm
-    env:
-      FISCH_MACRO_VERSION: ${{ needs.resolve.outputs.version }}
-    steps:
-      # gcc, the Python headers and linux-libc-dev are for evdev, which pynput
-      # pulls in on Linux: it publishes no aarch64 wheel, so it is compiled
-      # here, and it generates its keycode table from linux/input.h.
-      # xvfb covers the smoke test below — pyautogui's X11 module opens the
-      # display at import time, so the binary cannot even start without one.
-      - name: Install build dependencies
-        run: |
-          apt-get update
-          apt-get install -y --no-install-recommends \
-            git python3 python3-pip python3-venv python3-tk python3-dev \
-            gcc linux-libc-dev binutils libgl1 libglib2.0-0 \
-            xvfb xauth
-
-      - uses: actions/checkout@v4
-
-      - name: Build
-        run: |
-          python3 -m venv /tmp/buildenv
-          /tmp/buildenv/bin/pip install --upgrade pip
-          /tmp/buildenv/bin/pip install -r requirements.txt pyinstaller
-          /tmp/buildenv/bin/python -c "import tkinter; print('tkinter', tkinter.TkVersion)"
-          /tmp/buildenv/bin/pyinstaller fisch-macro.spec --noconfirm
-
-      - name: Verify the build runs
-        run: |
-          xvfb-run -a dist/FischMacro/FischMacro --list-profiles
-          xvfb-run -a dist/FischMacro/FischMacro --check-backend
-          xvfb-run -a dist/FischMacro/FischMacro --version \
-            | grep -qF "${FISCH_MACRO_VERSION}"
-
-      - name: Package
-        run: tar -czf FischMacro-linux-arm64.tar.gz -C dist FischMacro
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: FischMacro-linux-arm64
-          path: FischMacro-linux-arm64.tar.gz
-          if-no-files-found: error
-
   release:
-    needs: [resolve, build, build-linux-arm64]
+    needs: [resolve, build]
     if: needs.resolve.outputs.release == 'true'
     runs-on: ubuntu-latest
     steps:

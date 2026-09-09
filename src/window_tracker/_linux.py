@@ -6,8 +6,8 @@ dependency on Linux), falling back to shelling out to xdotool.
 
 Wayland is not supported and cannot be: neither mss nor pyautogui can capture
 or inject into another application's surface under a Wayland compositor, which
-is the default on Raspberry Pi OS. `diagnostics()` surfaces that clearly rather
-than letting the macro fail with empty captures.
+many distributions now default to. `diagnostics()` surfaces that clearly
+rather than letting the macro fail with empty captures.
 """
 
 import logging
@@ -181,9 +181,9 @@ class LinuxBackend(WindowBackend):
             return (
                 "This looks like a Wayland session. Screen capture and input "
                 "injection into other applications do not work under Wayland — "
-                "the macro cannot see or control the game. Switch to an X11 "
-                "session (raspi-config > Advanced Options > Wayland > X11) and "
-                "log back in."
+                "the macro cannot see or control the game. Log in to an X11 "
+                "session instead — most display managers offer it as a choice "
+                "on the login screen."
             )
 
         if not os.environ.get("DISPLAY"):

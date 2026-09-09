@@ -1,9 +1,9 @@
-"""The headless runner is the only way to use the macro on the Pi's 4" screen.
+"""The headless runner is the only way to use the macro on a small display.
 
-The GUI panel is 372x572 with a 340x500 minimum, so it cannot be shown on an
-800x480 display at all. That makes this path load-bearing rather than a
-convenience, and the parts that bit in the GUI — stale window bounds, hotkey
-double-fire on key release — have to be handled here too.
+The GUI panel is 372x572 with a 340x500 minimum, so anything smaller cannot
+show it at all. That makes this path load-bearing rather than a convenience,
+and the parts that bit in the GUI — stale window bounds, hotkey double-fire on
+key release — have to be handled here too.
 """
 
 import pathlib
