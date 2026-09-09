@@ -32,7 +32,10 @@ jobs:
         include:
           - os: macos-14
             artifact: macos-arm64
-          - os: macos-13
+          # macos-13 was the Intel image until GitHub retired it; jobs
+          # targeting that label now sit unassigned forever rather than
+          # failing. macos-15-intel is its replacement.
+          - os: macos-15-intel
             artifact: macos-x86_64
           - os: windows-latest
             artifact: windows-x86_64
