@@ -429,8 +429,14 @@ class InteractiveCalibrator(tk.Toplevel):
 
         self.rect_start = None
 
-        if rw < 10 or rh < 10:
-            self.info_label.config(text="Drawn region too small. Try again.")
+        # Only a box with no area at all is rejected — that is a stray click,
+        # not a region. There used to be a 10px floor on both sides, which made
+        # the genuinely thin regions impossible to mark: the catch-progress bar
+        # is a few pixels tall, and every attempt at it was thrown away with
+        # "too small". Capture pads the progress ROI vertically anyway (see
+        # Detector.padded_progress_roi), so a tight box is the right box.
+        if rw < 1 or rh < 1:
+            self.info_label.config(text="That was a click, not a box. Drag to draw one.")
             self.canvas.delete(self.current_rect_id)
             self.drawn_rects.pop(self.mode, None)
             return
