@@ -13,6 +13,8 @@ from typing import Optional, Callable, List
 
 import pyautogui
 
+from src.humanize import jitter_point, jitter_seconds
+
 # -- Module-level pyautogui safety configuration --
 pyautogui.FAILSAFE = True  # Move mouse to upper-left corner = emergency stop
 pyautogui.PAUSE = 0.01     # Minimal delay between pyautogui calls
@@ -280,12 +282,20 @@ class Controller:
         self._mouse_held = False
         self.logger.debug("Mouse released.")
 
-    def mouse_click(self, x: Optional[int] = None, y: Optional[int] = None) -> None:
+    def mouse_click(
+        self,
+        x: Optional[int] = None,
+        y: Optional[int] = None,
+        jitter_px: float = 0.0,
+    ) -> None:
         """Perform a single left-click.
 
         Args:
             x: Optional x-coordinate. If None, clicks at current position.
             y: Optional y-coordinate. If None, clicks at current position.
+            jitter_px: Scatter the target by up to this many pixels. Only
+                meaningful when a coordinate is given; see src/humanize.py for
+                why the same pixel every time is worth avoiding.
         """
         if not self._check_safety():
             return
@@ -294,13 +304,16 @@ class Controller:
         self._mouse_held = False
 
         if x is not None and y is not None:
+            x, y = jitter_point(x, y, jitter_px)
             pyautogui.click(x, y)
         else:
             pyautogui.click()
 
         self.logger.debug("Mouse clicked at (%s, %s).", x, y)
 
-    def rapid_click(self, count: int = 3, interval: float = 0.05) -> None:
+    def rapid_click(
+        self, count: int = 3, interval: float = 0.05, jitter_frac: float = 0.0
+    ) -> None:
         """Perform multiple rapid left-clicks.
 
         Used for shake/QTE events that require fast clicking.
@@ -308,6 +321,10 @@ class Controller:
         Args:
             count: Number of clicks to perform.
             interval: Seconds between each click.
+            jitter_frac: Scatter each gap by this fraction of ``interval``. A
+                burst of clicks spaced identically to the microsecond is the
+                most machine-like thing the macro emits, so this is worth
+                setting whenever ``interval`` is non-zero.
         """
         # Ensure we don't think the mouse is still held after clicking
         self._mouse_held = False
@@ -318,7 +335,7 @@ class Controller:
                 return
             pyautogui.click()
             if i < count - 1:
-                time.sleep(interval)
+                time.sleep(jitter_seconds(interval, jitter_frac))
 
         self.logger.debug("Rapid clicked %d times.", count)
 

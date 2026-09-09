@@ -2,10 +2,15 @@
 Fisch Macro GUI — tkinter Control Panel
 
 Provides a compact, always-on-top window with:
-- Control tab: Start/Stop, status, stats
-- Settings tab: Timing sliders, toggles
+- Control tab: Start/Stop, status, live vision, stats
+- Settings tab: everyday controls, then fold-out sections for tuning
 - Calibration tab: ROI + color profile management
-- Debug tab: Live detection preview
+- Log tab: activity log
+
+Sized to sit beside a windowed Roblox rather than cover it. Nothing was
+dropped to get there: the panel shows the same readouts and offers the same
+controls, packed into single-row sliders, paired toggles and shorter cards,
+with the tuning parameters folded away behind their section headers.
 """
 
 import logging
@@ -35,6 +40,7 @@ COLORS = {
     "settings_bg": "#eef1f5",
     "settings_text": "#000000",
     "settings_dim": "#444444",
+    "settings_head": "#dde3ec",
 }
 
 STATE_COLORS = {
@@ -85,8 +91,10 @@ class MacroGUI:
         # Initialize common variables (must be after tk.Tk())
         self.profile_var = tk.StringVar(value=self.settings.active_profile)
         self.root.title("Fisch Macro")
-        self.root.geometry("440x780")
-        self.root.minsize(400, 640)
+        # Two thirds the old footprint: the panel sits beside a windowed
+        # Roblox rather than covering it.
+        self.root.geometry("372x572")
+        self.root.minsize(340, 500)
         self._vision_photo = None
         self.root.configure(bg=COLORS["bg"])
         self.root.attributes("-topmost", True)
@@ -139,6 +147,7 @@ class MacroGUI:
             self.scan_interval_var,
             self.auto_recast_var,
             self.shake_enabled_var,
+            self.humanize_var,
             self.duty_kp_var,
             self.duty_ki_var,
             self.neutral_duty_var,
@@ -180,8 +189,9 @@ class MacroGUI:
             "TNotebook.Tab",
             background=COLORS["bg_secondary"],
             foreground=COLORS["text_dim"],
-            padding=[12, 6],
+            padding=[9, 4],
             borderwidth=0,
+            font=("Helvetica Neue", 10),
         )
         s.map(
             "TNotebook.Tab",
@@ -193,51 +203,51 @@ class MacroGUI:
             "TLabel",
             background=COLORS["bg"],
             foreground=COLORS["text"],
-            font=("Helvetica Neue", 13),
+            font=("Helvetica Neue", 11),
         )
         s.configure(
             "Header.TLabel",
-            font=("Helvetica Neue", 22, "bold"),
+            font=("Helvetica Neue", 16, "bold"),
             foreground=COLORS["text"],
         )
         s.configure(
             "Status.TLabel",
-            font=("Helvetica Neue", 15, "bold"),
+            font=("Helvetica Neue", 12, "bold"),
             foreground=COLORS["accent"],
         )
         s.configure(
             "Stat.TLabel",
-            font=("Menlo", 14),
+            font=("Menlo", 11),
             foreground=COLORS["accent_blue"],
         )
         s.configure(
             "Dim.TLabel",
-            font=("Helvetica Neue", 12),
+            font=("Helvetica Neue", 10),
             foreground=COLORS["text_dim"],
         )
         s.configure(
             "Card.TLabel",
             background=COLORS["bg_card"],
             foreground=COLORS["text"],
-            font=("Helvetica Neue", 13),
+            font=("Helvetica Neue", 11),
         )
         s.configure(
             "CardDim.TLabel",
             background=COLORS["bg_card"],
             foreground=COLORS["text_dim"],
-            font=("Helvetica Neue", 12),
+            font=("Helvetica Neue", 9),
         )
         s.configure(
             "CardStat.TLabel",
             background=COLORS["bg_card"],
             foreground=COLORS["accent_blue"],
-            font=("Menlo", 16, "bold"),
+            font=("Menlo", 13, "bold"),
         )
 
         s.configure(
             "Start.TButton",
-            font=("Helvetica Neue", 14, "bold"),
-            padding=[20, 10],
+            font=("Helvetica Neue", 12, "bold"),
+            padding=[12, 6],
         )
         s.configure(
             "TScale",
@@ -248,7 +258,7 @@ class MacroGUI:
             "TCheckbutton",
             background=COLORS["bg"],
             foreground=COLORS["text"],
-            font=("Helvetica Neue", 12),
+            font=("Helvetica Neue", 10),
         )
 
         # ── Settings panel — light card with black text ──
@@ -260,19 +270,19 @@ class MacroGUI:
             "Settings.TLabel",
             background=COLORS["settings_bg"],
             foreground=COLORS["settings_text"],
-            font=("Helvetica Neue", 13),
+            font=("Helvetica Neue", 11),
         )
         s.configure(
             "SettingsDim.TLabel",
             background=COLORS["settings_bg"],
             foreground=COLORS["settings_dim"],
-            font=("Helvetica Neue", 10, "bold"),
+            font=("Helvetica Neue", 9, "bold"),
         )
         s.configure(
             "SettingsStat.TLabel",
             background=COLORS["settings_bg"],
             foreground=COLORS["settings_text"],
-            font=("Menlo", 12),
+            font=("Menlo", 10),
         )
         s.configure(
             "Settings.TScale",
@@ -291,7 +301,7 @@ class MacroGUI:
             "Settings.TCheckbutton",
             background=COLORS["settings_bg"],
             foreground=COLORS["settings_text"],
-            font=("Helvetica Neue", 12),
+            font=("Helvetica Neue", 10),
         )
 
     # ─── Header ───────────────────────────────────────────────────
@@ -299,7 +309,7 @@ class MacroGUI:
     def _build_header(self):
         """Build the title header with hotkey info."""
         header = ttk.Frame(self.root, style="TFrame")
-        header.pack(fill=tk.X, padx=16, pady=(12, 4))
+        header.pack(fill=tk.X, padx=10, pady=(8, 2))
 
         title_frame = ttk.Frame(header)
         title_frame.pack(fill=tk.X)
@@ -320,17 +330,17 @@ class MacroGUI:
     def _build_notebook(self):
         """Build the tabbed notebook."""
         self.notebook = ttk.Notebook(self.root)
-        self.notebook.pack(fill=tk.BOTH, expand=True, padx=10, pady=(4, 10))
+        self.notebook.pack(fill=tk.BOTH, expand=True, padx=6, pady=(2, 6))
 
         self.control_tab = ttk.Frame(self.notebook, style="TFrame")
         self.settings_tab = ttk.Frame(self.notebook, style="TFrame")
         self.calibration_tab = ttk.Frame(self.notebook, style="TFrame")
         self.log_tab = ttk.Frame(self.notebook, style="TFrame")
 
-        self.notebook.add(self.control_tab, text="  Control  ")
-        self.notebook.add(self.settings_tab, text="  Settings  ")
-        self.notebook.add(self.calibration_tab, text="  Calibrate  ")
-        self.notebook.add(self.log_tab, text="  Log  ")
+        self.notebook.add(self.control_tab, text=" Control ")
+        self.notebook.add(self.settings_tab, text=" Settings ")
+        self.notebook.add(self.calibration_tab, text=" Calibrate ")
+        self.notebook.add(self.log_tab, text=" Log ")
 
         # The calibration readout reflects the ROI-shift sliders on the
         # Settings tab, so it is re-read on the way in rather than on every
@@ -341,30 +351,42 @@ class MacroGUI:
 
     # ─── Control Tab ──────────────────────────────────────────────
 
+    def _add_row_card(self, parent, pady=(3, 3), ipady=7, expand=False):
+        """Add a card to a container and return its padded inner frame."""
+        fill = tk.BOTH if expand else tk.X
+        card = ttk.Frame(parent, style="Card.TFrame")
+        card.pack(fill=fill, padx=6, pady=pady, expand=expand)
+
+        inner = ttk.Frame(card, style="Card.TFrame")
+        inner.pack(fill=fill, padx=10, pady=ipady, expand=expand)
+        return inner
+
     def _build_control_tab(self):
-        """Build the main control panel."""
+        """Build the main control panel.
+
+        Everything the panel showed before is still here — state, detail line,
+        on-target readout, live vision with its key, telemetry, both buttons,
+        the four counters, session time and window size. It is packed into
+        shorter cards and paired rows so it all fits without scrolling in a
+        window small enough to sit beside Roblox.
+        """
         tab = self.control_tab
 
-        # ── Status Section ──
-        status_frame = ttk.Frame(tab, style="Card.TFrame")
-        status_frame.pack(fill=tk.X, padx=8, pady=(8, 4))
-
-        # Status icon and text
-        status_inner = ttk.Frame(status_frame, style="Card.TFrame")
-        status_inner.pack(fill=tk.X, padx=16, pady=12)
+        # ── Status ──
+        status_inner = self._add_row_card(tab, pady=(6, 3))
 
         self.status_icon = ttk.Label(
             status_inner, text="⏸", style="Card.TLabel",
-            font=("Helvetica Neue", 28),
+            font=("Helvetica Neue", 19),
         )
-        self.status_icon.pack(side=tk.LEFT, padx=(0, 12))
+        self.status_icon.pack(side=tk.LEFT, padx=(0, 8))
 
         status_text = ttk.Frame(status_inner, style="Card.TFrame")
         status_text.pack(side=tk.LEFT, fill=tk.X, expand=True)
 
         self.status_label = ttk.Label(
             status_text, text="Stopped", style="Card.TLabel",
-            font=("Helvetica Neue", 16, "bold"),
+            font=("Helvetica Neue", 13, "bold"),
         )
         self.status_label.pack(anchor=tk.W)
 
@@ -376,22 +398,20 @@ class MacroGUI:
 
         self.on_target_label = ttk.Label(
             status_text, text="",
-            style="Card.TLabel", font=("Helvetica Neue", 11, "bold")
+            style="Card.TLabel", font=("Helvetica Neue", 10, "bold")
         )
         self.on_target_label.pack(anchor=tk.W)
 
         # ── Live vision (digmacro-style preview) ──
-        vision_card = ttk.Frame(tab, style="Card.TFrame")
-        vision_card.pack(fill=tk.X, padx=8, pady=(4, 4))
-
-        vision_inner = ttk.Frame(vision_card, style="Card.TFrame")
-        vision_inner.pack(fill=tk.X, padx=12, pady=10)
+        # Given the leftover height, so shrinking the window trims the
+        # telemetry rather than pushing the buttons off the bottom.
+        vision_inner = self._add_row_card(tab, pady=(3, 3), ipady=6, expand=True)
 
         ttk.Label(
             vision_inner,
             text="👁 Live Vision",
             style="Card.TLabel",
-            font=("Helvetica Neue", 12, "bold"),
+            font=("Helvetica Neue", 10, "bold"),
         ).pack(anchor=tk.W)
 
         self.vision_image_label = tk.Label(
@@ -399,8 +419,8 @@ class MacroGUI:
             text="Start macro to see detection…",
             bg="#0a0a14",
             fg=COLORS["text"],
-            font=("Menlo", 10),
-            height=4,
+            font=("Menlo", 9),
+            height=3,
         )
         self.vision_image_label.pack(fill=tk.X)
 
@@ -408,36 +428,42 @@ class MacroGUI:
 
         self.vision_telemetry = tk.Text(
             vision_inner,
-            height=6,
+            height=5,
+            width=1,
             bg="#0a0a14",
             fg="#a8d4ff",
-            font=("Menlo", 9),
+            font=("Menlo", 8),
             relief=tk.FLAT,
             wrap=tk.WORD,
+            padx=4,
+            pady=2,
         )
-        self.vision_telemetry.pack(fill=tk.X, pady=(6, 0))
+        self.vision_telemetry.pack(fill=tk.BOTH, expand=True, pady=(4, 0))
         self.vision_telemetry.config(state=tk.DISABLED)
 
-        # ── Start/Stop Button ──
+        # ── Start/Stop + emergency stop, side by side ──
+        buttons = ttk.Frame(tab, style="TFrame")
+        buttons.pack(fill=tk.X, padx=6, pady=(4, 3))
+
         self.start_button = tk.Button(
-            tab,
+            buttons,
             text="▶  START",
-            font=("Helvetica Neue", 15, "bold"),
+            font=("Helvetica Neue", 13, "bold"),
             bg=COLORS["accent_green"],
             fg="#ffffff",
             activebackground="#00b563",
             activeforeground="#ffffff",
             relief=tk.FLAT,
             cursor="hand2",
-            height=2,
+            height=1,
             command=self._toggle_macro,
         )
-        self.start_button.pack(fill=tk.X, padx=8, pady=8)
+        self.start_button.pack(side=tk.LEFT, fill=tk.X, expand=True)
 
         self.kill_button = tk.Button(
-            tab,
-            text="EMERGENCY STOP",
-            font=("Helvetica Neue", 13, "bold"),
+            buttons,
+            text="■ E-STOP",
+            font=("Helvetica Neue", 11, "bold"),
             bg=COLORS["danger"],
             fg="#ffffff",
             activebackground="#b83045",
@@ -447,66 +473,47 @@ class MacroGUI:
             height=1,
             command=self._emergency_stop,
         )
-        self.kill_button.pack(fill=tk.X, padx=8, pady=(0, 8))
+        self.kill_button.pack(side=tk.LEFT, padx=(6, 0))
 
         # ── Stats Grid ──
-        stats_frame = ttk.Frame(tab, style="Card.TFrame")
-        stats_frame.pack(fill=tk.X, padx=8, pady=4)
-
-        stats_inner = ttk.Frame(stats_frame, style="Card.TFrame")
-        stats_inner.pack(fill=tk.X, padx=16, pady=12)
+        stats_inner = self._add_row_card(tab, pady=(3, 3), ipady=6)
         stats_inner.columnconfigure((0, 1, 2, 3), weight=1)
 
-        # Row: labels
         for i, label in enumerate(["Caught", "Failed", "Casts", "Rate"]):
             ttk.Label(
                 stats_inner, text=label, style="CardDim.TLabel"
             ).grid(row=0, column=i, sticky=tk.N)
 
-        # Row: values
         self.stat_caught = ttk.Label(stats_inner, text="0", style="CardStat.TLabel")
-        self.stat_caught.grid(row=1, column=0, pady=(2, 0))
+        self.stat_caught.grid(row=1, column=0)
 
         self.stat_failed = ttk.Label(stats_inner, text="0", style="CardStat.TLabel")
-        self.stat_failed.grid(row=1, column=1, pady=(2, 0))
+        self.stat_failed.grid(row=1, column=1)
 
         self.stat_casts = ttk.Label(stats_inner, text="0", style="CardStat.TLabel")
-        self.stat_casts.grid(row=1, column=2, pady=(2, 0))
+        self.stat_casts.grid(row=1, column=2)
 
         self.stat_rate = ttk.Label(stats_inner, text="—", style="CardStat.TLabel")
-        self.stat_rate.grid(row=1, column=3, pady=(2, 0))
+        self.stat_rate.grid(row=1, column=3)
 
-        # ── Session Time ──
-        time_frame = ttk.Frame(tab, style="Card.TFrame")
-        time_frame.pack(fill=tk.X, padx=8, pady=4)
+        # ── Session time + Roblox window, one row instead of two cards ──
+        footer = self._add_row_card(tab, pady=(3, 6), ipady=5)
 
-        time_inner = ttk.Frame(time_frame, style="Card.TFrame")
-        time_inner.pack(fill=tk.X, padx=16, pady=8)
-
-        ttk.Label(time_inner, text="⏱ Session", style="CardDim.TLabel").pack(
-            side=tk.LEFT
-        )
+        ttk.Label(footer, text="⏱", style="CardDim.TLabel").pack(side=tk.LEFT)
         self.session_time = ttk.Label(
-            time_inner, text="00:00:00", style="Card.TLabel",
-            font=("Menlo", 13),
+            footer, text="00:00:00", style="Card.TLabel",
+            font=("Menlo", 11),
         )
-        self.session_time.pack(side=tk.RIGHT)
+        self.session_time.pack(side=tk.LEFT, padx=(4, 0))
 
-        # ── Window Status ──
-        win_frame = ttk.Frame(tab, style="Card.TFrame")
-        win_frame.pack(fill=tk.X, padx=8, pady=4)
-
-        win_inner = ttk.Frame(win_frame, style="Card.TFrame")
-        win_inner.pack(fill=tk.X, padx=16, pady=8)
-
-        ttk.Label(win_inner, text="🖥 Roblox Window", style="CardDim.TLabel").pack(
-            side=tk.LEFT
-        )
         self.window_status = ttk.Label(
-            win_inner, text="Searching...", style="Card.TLabel",
-            font=("Helvetica Neue", 11),
+            footer, text="Searching...", style="Card.TLabel",
+            font=("Helvetica Neue", 10),
         )
         self.window_status.pack(side=tk.RIGHT)
+        ttk.Label(footer, text="🖥", style="CardDim.TLabel").pack(
+            side=tk.RIGHT, padx=(0, 4)
+        )
 
     def _build_vision_key(self, parent):
         """Draw the overlay key from the palette the overlay itself uses.
@@ -520,11 +527,14 @@ class MacroGUI:
         from src.detector import OVERLAY_LEGEND, legend_hex
 
         key = ttk.Frame(parent, style="Card.TFrame")
-        key.pack(fill=tk.X, pady=(6, 0))
+        key.pack(fill=tk.X, pady=(4, 0))
 
+        # Three across rather than two: the same entries in two rows instead
+        # of three or four.
+        per_row = 3
         row = None
         for index, (name, label) in enumerate(OVERLAY_LEGEND):
-            if index % 2 == 0:
+            if index % per_row == 0:
                 row = ttk.Frame(key, style="Card.TFrame")
                 row.pack(fill=tk.X)
 
@@ -534,22 +544,29 @@ class MacroGUI:
             tk.Frame(
                 cell,
                 bg=legend_hex(name),
-                width=12,
-                height=4,
+                width=10,
+                height=3,
                 highlightthickness=0,
-            ).pack(side=tk.LEFT, padx=(0, 5), pady=3)
+            ).pack(side=tk.LEFT, padx=(0, 4), pady=2)
 
             ttk.Label(
                 cell,
                 text=label,
                 style="CardDim.TLabel",
-                font=("Helvetica Neue", 9),
+                font=("Helvetica Neue", 8),
             ).pack(side=tk.LEFT)
 
     # ─── Settings Tab ─────────────────────────────────────────────
 
     def _build_settings_tab(self):
-        """Build the settings panel with sliders and toggles."""
+        """Build the settings panel.
+
+        Ordered by how often a control is touched: the handful that get
+        changed between sessions sit at the top, always visible, and the
+        tuning parameters live in collapsed sections underneath. Everything
+        that was here before is still here — nothing has been dropped, it is
+        one click away instead of ten scroll wheels down.
+        """
         tab = self.settings_tab
 
         # Scrollable content
@@ -561,50 +578,77 @@ class MacroGUI:
             "<Configure>",
             lambda e: canvas.configure(scrollregion=canvas.bbox("all")),
         )
-        canvas.create_window((0, 0), window=content, anchor=tk.NW)
+        window_id = canvas.create_window((0, 0), window=content, anchor=tk.NW)
+        # Without this the content keeps its natural width, so the sliders
+        # stopped short of the panel edge and the value column floated.
+        canvas.bind(
+            "<Configure>",
+            lambda e: canvas.itemconfigure(window_id, width=e.width),
+        )
         canvas.configure(yscrollcommand=scrollbar.set)
 
         canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        self._bind_mousewheel(canvas)
 
-        # ── Timing Section ──
-        self._add_section_header(content, "Timing")
+        # ══ Everyday controls, always visible ══
+        self._add_section_header(content, "Fishing")
 
         self.cast_time_var = tk.DoubleVar(value=self.settings.cast_hold_time)
         self._add_slider(
-            content,
-            "Cast Hold Time",
-            self.cast_time_var,
-            0.5, 4.0, 0.1,
-            suffix="s",
+            content, "Cast Hold Time", self.cast_time_var, 0.5, 4.0, 0.1, suffix="s"
         )
 
         self.recast_delay_var = tk.DoubleVar(value=self.settings.recast_delay)
         self._add_slider(
-            content,
-            "Recast Delay",
-            self.recast_delay_var,
-            0.5, 5.0, 0.1,
-            suffix="s",
+            content, "Recast Delay", self.recast_delay_var, 0.5, 5.0, 0.1, suffix="s"
         )
 
         self.scan_interval_var = tk.IntVar(value=self.settings.scan_interval_ms)
         self._add_slider(
-            content,
-            "Scan Interval",
-            self.scan_interval_var,
-            20, 100, 5,
-            suffix="ms",
+            content, "Scan Interval", self.scan_interval_var, 20, 100, 5, suffix="ms"
         )
 
-        # ── Toggles Section ──
-        self._add_section_header(content, "Automation")
-
         self.auto_recast_var = tk.BooleanVar(value=self.settings.auto_recast)
-        self._add_toggle(content, "Auto Recast", self.auto_recast_var)
-
         self.shake_enabled_var = tk.BooleanVar(value=self.settings.shake_enabled)
-        self._add_toggle(content, "Auto Shake", self.shake_enabled_var)
+        self._add_toggle_pair(
+            content,
+            "Auto Recast", self.auto_recast_var,
+            "Auto Shake", self.shake_enabled_var,
+        )
+
+        self.show_live_vision_var = tk.BooleanVar(value=self.settings.show_live_vision)
+        self._add_toggle(content, "Live Vision Preview", self.show_live_vision_var)
+
+        # Off means every cast is charged for the identical number of
+        # microseconds and every shake click lands on the identical pixel.
+        self.humanize_var = tk.BooleanVar(value=self.settings.humanize)
+        self._add_toggle(content, "Humanize Inputs", self.humanize_var)
+
+        # Hotkey — one row, next to the toggles it belongs with.
+        ks_frame = ttk.Frame(content, style="Settings.TFrame")
+        ks_frame.pack(fill=tk.X, padx=10, pady=(2, 4))
+
+        ttk.Label(ks_frame, text="Start/Stop Key", style="Settings.TLabel").pack(
+            side=tk.LEFT
+        )
+        rebind_btn = tk.Button(
+            ks_frame, text="Rebind", font=("Helvetica Neue", 10),
+            bg=COLORS["accent"], fg="white", relief=tk.FLAT, cursor="hand2",
+            padx=8, pady=0,
+            command=self._rebind_killswitch,
+        )
+        rebind_btn.pack(side=tk.RIGHT)
+
+        self.killswitch_label = ttk.Label(
+            ks_frame,
+            text=self.settings.killswitch_key.upper(),
+            style="SettingsStat.TLabel",
+        )
+        self.killswitch_label.pack(side=tk.RIGHT, padx=8)
+
+        # ══ Everything else, folded away ══
+        self._add_section_header(content, "Advanced")
 
         # ── Reeling ──
         # These are ReelController's own parameters. The sliders that used to
@@ -612,164 +656,218 @@ class MacroGUI:
         # wired to anything for some time: half of them were read nowhere at
         # all, and the rest only inside helpers with no callers. Tuning them
         # did nothing, which is worse than not offering them.
-        self._add_section_header(content, "Reeling & Control")
+        reeling = self._add_collapsible(content, "Reeling & Control")
 
         self.duty_kp_var = tk.DoubleVar(value=self.settings.control_duty_kp)
-        self._add_slider(content, "Steering Strength", self.duty_kp_var, 2.0, 25.0, 0.5)
+        self._add_slider(reeling, "Steering Strength", self.duty_kp_var, 2.0, 25.0, 0.5)
 
         self.duty_ki_var = tk.DoubleVar(value=self.settings.control_duty_ki)
-        self._add_slider(content, "Steering Trim", self.duty_ki_var, 0.0, 3.0, 0.1)
+        self._add_slider(reeling, "Steering Trim", self.duty_ki_var, 0.0, 3.0, 0.1)
 
         self.neutral_duty_var = tk.DoubleVar(value=self.settings.control_neutral_duty)
-        self._add_slider(content, "Neutral Hold", self.neutral_duty_var, 0.30, 0.70, 0.005)
+        self._add_slider(reeling, "Neutral Hold", self.neutral_duty_var, 0.30, 0.70, 0.005)
 
         self.lead_seconds_var = tk.DoubleVar(value=self.settings.control_lead_seconds)
-        self._add_slider(content, "Fish Lookahead", self.lead_seconds_var, 0.0, 0.25, 0.01, suffix="s")
+        self._add_slider(reeling, "Fish Lookahead", self.lead_seconds_var, 0.0, 0.25, 0.01, suffix="s")
 
         self.stationary_speed_var = tk.DoubleVar(value=self.settings.control_stationary_speed)
-        self._add_slider(content, "Stationary Threshold", self.stationary_speed_var, 0.0, 0.20, 0.01)
+        self._add_slider(reeling, "Stationary Speed", self.stationary_speed_var, 0.0, 0.20, 0.01)
 
         self.bar_accel_var = tk.DoubleVar(value=self.settings.control_bar_accel)
-        self._add_slider(content, "Bar Acceleration", self.bar_accel_var, 0.2, 3.0, 0.05)
+        self._add_slider(reeling, "Bar Acceleration", self.bar_accel_var, 0.2, 3.0, 0.05)
 
         self.latency_var = tk.DoubleVar(value=self.settings.control_latency_seconds)
-        self._add_slider(content, "Input Latency", self.latency_var, 0.0, 0.20, 0.01, suffix="s")
+        self._add_slider(reeling, "Input Latency", self.latency_var, 0.0, 0.20, 0.01, suffix="s")
 
         self.max_brake_var = tk.DoubleVar(value=self.settings.control_max_brake_distance)
-        self._add_slider(content, "Max Braking Distance", self.max_brake_var, 0.05, 0.60, 0.05)
+        self._add_slider(reeling, "Max Brake Distance", self.max_brake_var, 0.05, 0.60, 0.05)
 
         # ── Catch Detection ──
-        self._add_section_header(content, "Catch Detection")
+        catch = self._add_collapsible(content, "Catch Detection")
 
         self.reeling_guard_var = tk.DoubleVar(value=self.settings.reeling_guard_seconds)
-        self._add_slider(content, "Reel Start Guard", self.reeling_guard_var, 1.0, 5.0, 0.25, suffix="s")
+        self._add_slider(catch, "Reel Start Guard", self.reeling_guard_var, 1.0, 5.0, 0.25, suffix="s")
 
         self.min_catch_seconds_var = tk.DoubleVar(value=self.settings.min_catch_seconds)
-        self._add_slider(content, "Min Catch Time", self.min_catch_seconds_var, 1.0, 10.0, 0.5, suffix="s")
+        self._add_slider(catch, "Min Catch Time", self.min_catch_seconds_var, 1.0, 10.0, 0.5, suffix="s")
 
         self.fast_catch_min_seconds_var = tk.DoubleVar(
             value=getattr(self.settings, "fast_catch_min_seconds", 1.0)
         )
         self._add_slider(
-            content,
-            "Fast Rod Min Reel",
-            self.fast_catch_min_seconds_var,
-            0.5,
-            4.0,
-            0.25,
-            suffix="s",
+            catch, "Fast Rod Min Reel", self.fast_catch_min_seconds_var,
+            0.5, 4.0, 0.25, suffix="s",
         )
 
         self.post_catch_lockout_var = tk.DoubleVar(
             value=getattr(self.settings, "post_catch_lockout_seconds", 1.5)
         )
         self._add_slider(
-            content,
-            "Post-Catch Lockout",
-            self.post_catch_lockout_var,
-            0.5,
-            5.0,
-            0.25,
-            suffix="s",
+            catch, "Post-Catch Lockout", self.post_catch_lockout_var,
+            0.5, 5.0, 0.25, suffix="s",
         )
 
         self.min_midgame_progress_var = tk.DoubleVar(value=self.settings.min_midgame_progress)
-        self._add_slider(content, "Min Progress Before Catch", self.min_midgame_progress_var, 0.20, 0.60, 0.05)
+        self._add_slider(catch, "Min Catch Progress", self.min_midgame_progress_var, 0.20, 0.60, 0.05)
 
         self.finish_progress_threshold_var = tk.DoubleVar(value=self.settings.finish_progress_threshold)
-        self._add_slider(content, "Finish Progress", self.finish_progress_threshold_var, 0.90, 0.99, 0.01)
+        self._add_slider(catch, "Finish Progress", self.finish_progress_threshold_var, 0.90, 0.99, 0.01)
 
         # ── Calibration alignment ──
-        self._add_section_header(content, "Calibration Alignment")
+        align = self._add_collapsible(content, "Calibration Alignment")
 
         self.roi_shift_x_var = tk.DoubleVar(value=self.settings.roi_shift_x)
-        self._add_slider(content, "ROI Shift X", self.roi_shift_x_var, -0.08, 0.08, 0.005)
+        self._add_slider(align, "ROI Shift X", self.roi_shift_x_var, -0.08, 0.08, 0.005)
 
         self.roi_shift_y_var = tk.DoubleVar(value=self.settings.roi_shift_y)
-        self._add_slider(content, "ROI Shift Y", self.roi_shift_y_var, -0.08, 0.08, 0.005)
+        self._add_slider(align, "ROI Shift Y", self.roi_shift_y_var, -0.08, 0.08, 0.005)
 
         self.window_inset_top_var = tk.DoubleVar(value=self.settings.window_inset_top)
-        self._add_slider(content, "Window Inset Top", self.window_inset_top_var, 0.0, 0.08, 0.005)
+        self._add_slider(align, "Window Inset Top", self.window_inset_top_var, 0.0, 0.08, 0.005)
 
         self.window_inset_left_var = tk.DoubleVar(value=self.settings.window_inset_left)
-        self._add_slider(content, "Window Inset Left", self.window_inset_left_var, 0.0, 0.08, 0.005)
+        self._add_slider(align, "Window Inset Left", self.window_inset_left_var, 0.0, 0.08, 0.005)
 
-        self.show_live_vision_var = tk.BooleanVar(value=self.settings.show_live_vision)
-        self._add_toggle(content, "Live Vision Preview", self.show_live_vision_var)
+    def _bind_mousewheel(self, canvas):
+        """Scroll a canvas under the pointer with the wheel/trackpad."""
+        def on_wheel(event):
+            delta = event.delta
+            if delta == 0:
+                delta = 1 if event.num == 4 else -1
+            canvas.yview_scroll(-1 if delta > 0 else 1, "units")
 
-        # ── Hotkey Section ──
-        self._add_section_header(content, "Hotkey")
-
-        ks_frame = ttk.Frame(content, style="Settings.TFrame")
-        ks_frame.pack(fill=tk.X, padx=12, pady=4)
-
-        ttk.Label(ks_frame, text="Start/Stop Key:", style="Settings.TLabel").pack(side=tk.LEFT)
-        self.killswitch_label = ttk.Label(
-            ks_frame, text=self.settings.killswitch_key.upper(), style="SettingsStat.TLabel"
-        )
-        self.killswitch_label.pack(side=tk.LEFT, padx=10)
-
-        rebind_btn = tk.Button(
-            ks_frame, text="Rebind", font=("Helvetica Neue", 12),
-            bg=COLORS["accent"], fg="white", cursor="hand2",
-            command=self._rebind_killswitch
-        )
-        rebind_btn.pack(side=tk.RIGHT)
+        canvas.bind("<Enter>", lambda _e: (
+            canvas.bind_all("<MouseWheel>", on_wheel),
+            canvas.bind_all("<Button-4>", on_wheel),
+            canvas.bind_all("<Button-5>", on_wheel),
+        ))
+        canvas.bind("<Leave>", lambda _e: (
+            canvas.unbind_all("<MouseWheel>"),
+            canvas.unbind_all("<Button-4>"),
+            canvas.unbind_all("<Button-5>"),
+        ))
 
     def _add_section_header(self, parent, text):
         """Add a section header label."""
         frame = ttk.Frame(parent, style="Settings.TFrame")
-        frame.pack(fill=tk.X, padx=12, pady=(16, 4))
+        frame.pack(fill=tk.X, padx=10, pady=(10, 2))
         ttk.Label(
             frame,
             text=text.upper(),
             style="SettingsDim.TLabel",
         ).pack(anchor=tk.W)
 
+    def _add_collapsible(self, parent, title, expanded=False):
+        """Add a fold-out section and return the frame its controls go in.
+
+        Collapsed by default: these are the knobs that get set once during
+        tuning and then left alone, so they cost a click when wanted and no
+        height at all the rest of the time.
+        """
+        wrapper = ttk.Frame(parent, style="Settings.TFrame")
+        wrapper.pack(fill=tk.X, padx=10, pady=(2, 0))
+
+        head = tk.Label(
+            wrapper,
+            anchor=tk.W,
+            bg=COLORS["settings_head"],
+            fg=COLORS["settings_text"],
+            font=("Helvetica Neue", 11, "bold"),
+            padx=8,
+            pady=4,
+            cursor="hand2",
+        )
+        head.pack(fill=tk.X)
+
+        body = ttk.Frame(wrapper, style="Settings.TFrame")
+        is_open = tk.BooleanVar(value=expanded)
+
+        def render():
+            arrow = "▾" if is_open.get() else "▸"
+            head.config(text=f"{arrow}  {title}")
+            if is_open.get():
+                body.pack(fill=tk.X, pady=(2, 6))
+            else:
+                body.pack_forget()
+
+        def toggle(_event=None):
+            is_open.set(not is_open.get())
+            render()
+
+        head.bind("<Button-1>", toggle)
+        render()
+        return body
+
     def _add_slider(self, parent, label, variable, from_, to, resolution, suffix=""):
-        """Add a labeled slider with value display."""
-        frame = ttk.Frame(parent, style="Settings.TFrame")
-        frame.pack(fill=tk.X, padx=12, pady=4)
+        """Add a labeled slider on a single row: name, track, value.
 
-        top = ttk.Frame(frame, style="Settings.TFrame")
-        top.pack(fill=tk.X)
+        The name and value used to sit on a row of their own above the track,
+        which cost twice the height per control. ``resolution`` now picks how
+        many decimals the value shows — it was accepted and ignored before, so
+        a 0.005-step slider read as one decimal and looked stuck while moving.
+        """
+        row = ttk.Frame(parent, style="Settings.TFrame")
+        row.pack(fill=tk.X, padx=10, pady=1)
 
-        ttk.Label(top, text=label, style="Settings.TLabel").pack(side=tk.LEFT)
+        ttk.Label(
+            row, text=label, style="Settings.TLabel", width=19, anchor=tk.W
+        ).pack(side=tk.LEFT)
+
+        decimals = 0
+        if isinstance(resolution, float):
+            step = abs(resolution)
+            decimals = 1 if step >= 0.1 else 2 if step >= 0.01 else 3
 
         value_label = ttk.Label(
-            top,
-            text=f"{variable.get()}{suffix}",
+            row,
+            text="",
             style="SettingsStat.TLabel",
+            width=6,
+            anchor=tk.E,
         )
         value_label.pack(side=tk.RIGHT)
 
         scale = ttk.Scale(
-            frame,
+            row,
             from_=from_,
             to=to,
             variable=variable,
             style="Settings.TScale",
             orient=tk.HORIZONTAL,
         )
-        scale.pack(fill=tk.X, pady=(2, 0))
+        scale.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(6, 4))
 
         def update_label(*_args):
             val = variable.get()
             if isinstance(val, float):
-                value_label.config(text=f"{val:.1f}{suffix}")
+                value_label.config(text=f"{val:.{decimals}f}{suffix}")
             else:
                 value_label.config(text=f"{val}{suffix}")
 
         variable.trace_add("write", update_label)
+        update_label()
 
     def _add_toggle(self, parent, label, variable):
         """Add a labeled toggle checkbox."""
         frame = ttk.Frame(parent, style="Settings.TFrame")
-        frame.pack(fill=tk.X, padx=12, pady=4)
+        frame.pack(fill=tk.X, padx=10, pady=1)
         cb = ttk.Checkbutton(
             frame, text=label, variable=variable, style="Settings.TCheckbutton"
         )
         cb.pack(anchor=tk.W)
+
+    def _add_toggle_pair(self, parent, left_label, left_var, right_label, right_var):
+        """Add two toggles side by side, for the ones that read as a pair."""
+        frame = ttk.Frame(parent, style="Settings.TFrame")
+        frame.pack(fill=tk.X, padx=10, pady=1)
+        frame.columnconfigure((0, 1), weight=1)
+
+        ttk.Checkbutton(
+            frame, text=left_label, variable=left_var, style="Settings.TCheckbutton"
+        ).grid(row=0, column=0, sticky=tk.W)
+        ttk.Checkbutton(
+            frame, text=right_label, variable=right_var, style="Settings.TCheckbutton"
+        ).grid(row=0, column=1, sticky=tk.W)
 
     # ─── Calibration Tab ──────────────────────────────────────────
 
@@ -799,6 +897,7 @@ class MacroGUI:
         canvas.configure(yscrollcommand=scrollbar.set)
         canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        self._bind_mousewheel(canvas)
 
         # ── Step 1: which rod ──
         step1 = self._add_card(content, "1  Rod profile")
@@ -809,7 +908,7 @@ class MacroGUI:
                  "regions below. Switching rods loads its saved calibration back.",
             style="CardDim.TLabel",
             justify=tk.LEFT,
-        ).pack(anchor=tk.W, pady=(2, 8))
+        ).pack(anchor=tk.W, pady=(2, 6))
 
         selector = ttk.Frame(step1, style="Card.TFrame")
         selector.pack(fill=tk.X)
@@ -819,15 +918,16 @@ class MacroGUI:
             textvariable=self.profile_var,
             values=self.config.list_profiles(),
             state="readonly",
-            width=16,
+            width=14,
+            font=("Helvetica Neue", 10),
         )
-        self.profile_combo.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 8))
+        self.profile_combo.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 6))
         self.profile_combo.bind("<<ComboboxSelected>>", self._on_profile_change)
 
         tk.Button(
             selector,
             text="＋ New rod",
-            font=("Helvetica Neue", 11),
+            font=("Helvetica Neue", 10),
             bg=COLORS["bg_secondary"],
             fg=COLORS["text"],
             activebackground=COLORS["border"],
@@ -840,7 +940,7 @@ class MacroGUI:
         tk.Button(
             selector,
             text="🗑",
-            font=("Helvetica Neue", 11),
+            font=("Helvetica Neue", 10),
             bg=COLORS["danger"],
             fg="#ffffff",
             activebackground="#c73a50",
@@ -861,12 +961,12 @@ class MacroGUI:
                  "Roblox must be windowed with the minigame on screen.",
             style="CardDim.TLabel",
             justify=tk.LEFT,
-        ).pack(anchor=tk.W, pady=(2, 8))
+        ).pack(anchor=tk.W, pady=(2, 6))
 
         tk.Button(
             step2,
             text="👁  Open calibration overlay",
-            font=("Helvetica Neue", 12, "bold"),
+            font=("Helvetica Neue", 11, "bold"),
             bg=COLORS["accent_yellow"],
             fg="#ffffff",
             activebackground="#f5b853",
@@ -881,14 +981,15 @@ class MacroGUI:
 
         self.calibration_readout = tk.Text(
             step3,
-            height=9,
+            height=8,
+            width=1,
             bg="#0a0a14",
             fg="#a8d4ff",
-            font=("Menlo", 10),
+            font=("Menlo", 9),
             relief=tk.FLAT,
             wrap=tk.NONE,
-            padx=8,
-            pady=6,
+            padx=6,
+            pady=4,
             highlightthickness=0,
         )
         self.calibration_readout.pack(fill=tk.X, pady=(4, 0))
@@ -898,19 +999,19 @@ class MacroGUI:
             step3,
             text="",
             style="Card.TLabel",
-            font=("Helvetica Neue", 11, "bold"),
-            wraplength=330,
+            font=("Helvetica Neue", 10, "bold"),
+            wraplength=290,
             justify=tk.LEFT,
         )
-        self.calibration_status.pack(anchor=tk.W, pady=(8, 0))
+        self.calibration_status.pack(anchor=tk.W, pady=(6, 0))
 
         buttons = ttk.Frame(step3, style="Card.TFrame")
-        buttons.pack(fill=tk.X, pady=(10, 0))
+        buttons.pack(fill=tk.X, pady=(8, 0))
 
         self.save_calibration_btn = tk.Button(
             buttons,
             text="💾  Save to rod",
-            font=("Helvetica Neue", 12, "bold"),
+            font=("Helvetica Neue", 11, "bold"),
             bg=COLORS["accent_blue"],
             fg="#ffffff",
             activebackground="#3aa3d7",
@@ -924,7 +1025,7 @@ class MacroGUI:
         self.revert_calibration_btn = tk.Button(
             buttons,
             text="↩  Revert",
-            font=("Helvetica Neue", 12),
+            font=("Helvetica Neue", 11),
             bg=COLORS["bg_secondary"],
             fg=COLORS["text"],
             activebackground=COLORS["border"],
@@ -940,14 +1041,14 @@ class MacroGUI:
     def _add_card(self, parent, title):
         """Add a titled card to a container and return its inner frame."""
         card = ttk.Frame(parent, style="Card.TFrame")
-        card.pack(fill=tk.X, padx=8, pady=6)
+        card.pack(fill=tk.X, padx=6, pady=4)
 
         inner = ttk.Frame(card, style="Card.TFrame")
-        inner.pack(fill=tk.X, padx=14, pady=12)
+        inner.pack(fill=tk.X, padx=10, pady=8)
 
         ttk.Label(
             inner, text=title, style="Card.TLabel",
-            font=("Helvetica Neue", 13, "bold"),
+            font=("Helvetica Neue", 11, "bold"),
         ).pack(anchor=tk.W)
         return inner
 
@@ -959,19 +1060,20 @@ class MacroGUI:
 
         # Log text area
         log_frame = ttk.Frame(tab)
-        log_frame.pack(fill=tk.BOTH, expand=True, padx=8, pady=8)
+        log_frame.pack(fill=tk.BOTH, expand=True, padx=6, pady=6)
 
         self.log_text = tk.Text(
             log_frame,
+            width=1,
             bg=COLORS["bg_secondary"],
             fg=COLORS["text"],
-            font=("Menlo", 11),
+            font=("Menlo", 9),
             relief=tk.FLAT,
             wrap=tk.WORD,
             state=tk.DISABLED,
-            height=20,
-            padx=8,
-            pady=8,
+            height=14,
+            padx=6,
+            pady=6,
         )
         log_scrollbar = ttk.Scrollbar(
             log_frame, orient=tk.VERTICAL, command=self.log_text.yview
@@ -985,14 +1087,14 @@ class MacroGUI:
         clear_btn = tk.Button(
             tab,
             text="🗑  Clear Log",
-            font=("Helvetica Neue", 11),
+            font=("Helvetica Neue", 10),
             bg=COLORS["bg_secondary"],
             fg=COLORS["text_dim"],
             relief=tk.FLAT,
             cursor="hand2",
             command=self._clear_log,
         )
-        clear_btn.pack(fill=tk.X, padx=8, pady=(0, 8))
+        clear_btn.pack(fill=tk.X, padx=6, pady=(0, 6))
 
     # ─── Actions ──────────────────────────────────────────────────
 
@@ -1064,6 +1166,7 @@ class MacroGUI:
             self.settings.scan_interval_ms = int(self.scan_interval_var.get())
             self.settings.auto_recast = self.auto_recast_var.get()
             self.settings.shake_enabled = self.shake_enabled_var.get()
+            self.settings.humanize = self.humanize_var.get()
             self.settings.control_duty_kp = self.duty_kp_var.get()
             self.settings.control_duty_ki = self.duty_ki_var.get()
             self.settings.control_neutral_duty = self.neutral_duty_var.get()
@@ -1463,7 +1566,7 @@ class MacroGUI:
         label = self.settings.killswitch_key.upper()
         self.header_killswitch_label.config(text=f"⚡ Toggle: {label}")
         self.killswitch_label.config(text=label)
-        self.kill_button.config(text="EMERGENCY STOP")
+        self.kill_button.config(text="■ E-STOP")
 
     # ─── Thread-Safe Callbacks ────────────────────────────────────
 
@@ -1582,7 +1685,7 @@ class MacroGUI:
             else:
                 rgb = cv2.cvtColor(snap.frame_bgr, cv2.COLOR_BGR2RGB)
                 pil = Image.fromarray(rgb)
-                target_w = max(320, self.vision_image_label.winfo_width() or 380)
+                target_w = max(240, self.vision_image_label.winfo_width() or 320)
                 scale = min(1.0, target_w / max(pil.width, 1))
                 target_h = max(1, int(pil.height * scale))
                 if pil.width != target_w or pil.height != target_h:

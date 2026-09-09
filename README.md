@@ -7,7 +7,7 @@
 No memory reading, no injection, no client patching. Just pixels in and mouse clicks out.
 
 <img src="https://img.shields.io/badge/python-3.9%2B-3776ab?logo=python&logoColor=white" alt="Python 3.9+">
-<img src="https://img.shields.io/badge/platform-macOS-000000?logo=apple&logoColor=white" alt="macOS">
+<img src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-000000" alt="macOS, Windows, Linux">
 <img src="https://img.shields.io/badge/vision-OpenCV-5c3ee8?logo=opencv&logoColor=white" alt="OpenCV">
 <img src="https://img.shields.io/badge/gui-Tkinter-f5a623" alt="Tkinter">
 
@@ -32,6 +32,8 @@ The other half is control. The bar is a **double integrator** — holding accele
 - **Full cycle** — cast → wait → click SHAKE prompts → reel → recast, with a watchdog for casts that never landed
 - **Live vision preview** — the annotated frame and its telemetry, in the control panel, while it runs
 - **Global killswitch** — <kbd>F6</kbd> from inside the game; mouse to the top-left corner is a hard PyAutoGUI failsafe
+- **Runs off a Mac** — macOS, Windows and Linux/X11, with a `--headless` mode for screens too small for the panel
+- **Ships as an app** — one-command PyInstaller build, or download the artifact CI produces per platform
 
 ---
 
@@ -39,10 +41,29 @@ The other half is control. The bar is a **double integrator** — holding accele
 
 | | |
 |---|---|
-| **OS** | macOS — window tracking uses Quartz (`CGWindowListCopyWindowInfo`) |
+| **OS** | macOS, Windows, or Linux/X11 — see [Platforms](#platforms) |
 | **Python** | 3.9 or newer |
 | **Game** | Roblox running **windowed**, with the fishing UI on screen |
-| **Permissions** | System Settings → Privacy & Security → **Accessibility** and **Screen Recording** for your terminal or Python |
+| **Permissions** | macOS: System Settings → Privacy & Security → **Accessibility** and **Screen Recording** for your terminal or Python |
+
+## Platforms
+
+The macro locates the game window, then measures every region of interest as a
+*fraction* of it. So a platform is supported exactly when it can report that
+window's rectangle.
+
+| Platform | Window tracking | |
+|---|---|---|
+| macOS | Quartz `CGWindowListCopyWindowInfo` | Needs Accessibility + Screen Recording |
+| Windows | Win32 `EnumWindows` + DWM frame bounds | Unsigned builds trip SmartScreen |
+| Linux / X11 | `_NET_CLIENT_LIST` via python-xlib, `xdotool` fallback | Works with [Sober](https://sober.vinegarhq.org/) |
+| Linux / Wayland | not possible | see below |
+
+**Wayland cannot work.** Neither `mss` (capture) nor `pyautogui` (input) can
+reach another application's surface under a Wayland compositor, which is the
+default on Raspberry Pi OS. The macro detects a Wayland session and says so
+rather than failing with empty captures. Switch to X11 with `sudo raspi-config`
+→ Advanced Options → Wayland → X11, then log back in.
 
 ## Install
 
@@ -54,8 +75,12 @@ python3 -m venv venv
 source venv/bin/activate
 
 pip install -r requirements.txt
-pip install pyobjc-framework-Quartz     # macOS window + display-scale lookup
 ```
+
+The platform window-tracking packages (`pyobjc-framework-Quartz` on macOS,
+`python-xlib` on Linux) are declared with environment markers, so the right one
+installs automatically. The GUI needs `tkinter` — bundled with python.org and
+Homebrew builds; `sudo apt install python3-tk` on Debian/Ubuntu/Pi OS.
 
 ## Run
 
@@ -68,6 +93,33 @@ An always-on-top control panel opens. Press **START** (or <kbd>F6</kbd> from any
 <img src="docs/img/gui.svg" alt="The three main tabs of the control panel: Control with live vision and stats, Settings with the timing and control sliders, and Calibrate with the per-rod workflow" width="100%">
 
 <sub>Logs stream to the **Log** tab and to `logs/macro.log`.</sub>
+
+### Headless
+
+The panel is 372x572 with a 340x500 minimum, so it does not fit a small screen
+— an 800x480 Pi display cannot show it at all. For those, run without it:
+
+```bash
+python3 main.py --headless
+```
+
+Same engine, same <kbd>F6</kbd>, state and stats to the console:
+
+```
+[window] 800x480 at (0, 33), scale=1.0x
+[macro] started
+[state] Reeling
+[stats] caught=12 failed=3 casts=15 rate=80% uptime=42m10s (17/hr)
+```
+
+| Flag | |
+|---|---|
+| `--headless` | Run without the GUI |
+| `--no-autostart` | Wait for the hotkey instead of starting at once |
+| `--profile NAME` | Switch rod profile before starting |
+| `--list-profiles` | Print available profiles and exit |
+
+`tkinter` is imported lazily, so this runs on a machine without it.
 
 ---
 
@@ -87,6 +139,25 @@ The **Calibrate** tab opens a full-screen snapshot of the game. Work through the
 Step 4 is the one that matters most: the horizontal span of the track comes from it and never from a per-frame guess, because positions are normalised against that span — re-deriving it each tick makes a motionless bar look like it is moving, and the controller brakes against velocity that isn't there.
 
 Four profiles ship as examples: `default`, `Daybreaker`, `Castbound`, `Evil Pitchfork`.
+
+ROIs are stored as **fractions of the game window**, not screen pixels, so a
+profile survives moving the window or changing display. Two consequences worth
+knowing on a small screen:
+
+- **Calibrate with the window at the size you will run it.** Roblox mixes
+  proportional and fixed-pixel offsets, so the bar's *fractional* position
+  shifts between 1080p and 800x480. Size the window first, then calibrate.
+- **The progress ROI gets thin.** It spans about 1.4% of window height — some
+  6 px at 480p against 15 at 1080p. That is near the floor for a reliable read
+  and is usually what needs the most tuning.
+
+### On a Raspberry Pi
+
+There is no room for the calibration overlay on a 4" screen, so split it:
+calibrate on an external monitor with the game window sized to the Pi's
+resolution, then run `--headless` on the small display. Sober runs Roblox's
+Android client, whose fishing UI is laid out differently from the desktop
+one — expect to recalibrate rather than reuse a profile from a Mac or PC.
 
 ---
 
@@ -136,6 +207,7 @@ Everything is in `settings.json` and every slider writes to it live — the **Se
 | `min_catch_seconds` | `4.0 s` | Floor before a catch is believable |
 | `auto_recast` / `shake_enabled` | `on` / `off` | Cycle automation toggles |
 | `hunt_timeout_seconds` | `90 s` | Recast when a hunt produces nothing at all (`0` disables) |
+| `humanize` | `on` | Scatter cast/recast/shake timings and click points instead of repeating them exactly |
 
 If a rod consistently drifts to one wall, nudge **Neutral Hold**; if it oscillates around the fish, lower **Steering Strength** before touching anything else.
 
@@ -154,6 +226,10 @@ If a rod consistently drifts to one wall, nudge **Neutral Hold**; if it oscillat
 | `src/fisch_physics.py` | The game's rules, as documented and as measured. Stateless |
 | `src/detector.py` | Screen capture, progress/shake reading, overlay rendering |
 | `src/gui.py` · `src/interactive_calibrator.py` | Control panel and the full-screen calibration overlay |
+| `src/window_tracker/` | Per-platform window lookup: Quartz, Win32/DWM, X11 |
+| `src/headless.py` | The GUI-less runner and its console output |
+| `src/humanize.py` | Timing and click scatter, and where it must not be applied |
+| `src/paths.py` | Where settings live from a checkout vs a packaged build |
 | `src/config.py` · `settings.json` · `profiles/` | Settings and per-rod calibration |
 
 ## Offline tooling
@@ -176,11 +252,43 @@ pip install pytest && python3 -m pytest tests/unit -q
 
 ---
 
+## Standalone builds
+
+```bash
+pip install pyinstaller
+pyinstaller fisch-macro.spec --noconfirm
+```
+
+Output lands in `dist/` — `FischMacro.app` on macOS, a `FischMacro/` folder
+elsewhere. On Windows that folder holds two executables: `FischMacro.exe` for
+the GUI and `FischMacro-cli.exe` for `--headless`, because a windowed Windows
+binary has no stdout.
+
+Roughly 168 MB, most of it OpenCV. A packaged build keeps settings and profiles
+*outside* the bundle — in `~/Library/Application Support/FischMacro`,
+`%APPDATA%\FischMacro`, or `~/.config/fisch-macro` — seeded from the bundled
+defaults on first run, because a one-file build unpacks to a temp directory that
+is deleted on exit.
+
+Builds cannot be cross-compiled; each OS builds its own.
+[`.github/workflows/build.yml`](.github/workflows/build.yml) does all of them and
+attaches the artifacts to a release on tag push.
+
+Neither build is signed by a certificate authority. macOS ad-hoc signs the
+bundle, which gives it a stable identity so permission grants survive
+relaunches, but Gatekeeper still warns — right-click then Open the first time.
+On Windows, SmartScreen flags any unsigned binary, and Defender may object to a
+program that injects input and captures the screen. That is inherent to what a
+macro does, not a defect in the build.
+
+---
+
 ## Troubleshooting
 
 | Symptom | Cause |
 |---|---|
-| "Cannot locate Roblox window" | `pip install pyobjc-framework-Quartz`, and run Roblox windowed rather than fullscreen |
+| "Cannot locate Roblox window" | Run Roblox windowed rather than fullscreen. On Linux check python-xlib or `xdotool` is present |
+| Linux: black captures, clicks do nothing | A Wayland session. Switch to X11 — see [Platforms](#platforms) |
 | Nothing clicks, hotkey dead | Accessibility permission not granted to the terminal/Python that launched it |
 | Live vision is blank or misaligned | Recalibrate step 4; then nudge **ROI Shift X/Y** in Settings |
 | Bar drifts to one wall | **Neutral Hold** is off for this rod — the integral trim needs a better starting point |

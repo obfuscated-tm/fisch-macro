@@ -25,3 +25,9 @@ tests/frames/
 tests/out/
 # Source recordings are large binaries; keep them locally, not in git history.
 tests/clips/
+
+# PyInstaller
+build/
+dist/
+*.zip
+*.tar.gz
