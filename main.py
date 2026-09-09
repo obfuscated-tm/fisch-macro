@@ -12,7 +12,7 @@ from src.controller import Controller
 from src.detector import Detector
 from src.macro import MacroEngine
 from src.paths import log_dir, resolve_base_dir
-from src.window_tracker import WindowTracker
+from src.window_tracker import WindowTracker, report_backend
 
 
 def setup_logging(base_dir: str, console_level: int = logging.INFO):
@@ -90,6 +90,14 @@ def parse_args(argv=None):
         action="store_true",
         help="Print the available color profiles and exit.",
     )
+    parser.add_argument(
+        "--check-backend",
+        action="store_true",
+        help=(
+            "Report what the window tracker can see on this system and exit. "
+            "Use this first when the macro cannot find the game."
+        ),
+    )
     return parser.parse_args(argv)
 
 
@@ -101,9 +109,11 @@ def main(argv=None):
     # per-user data directory, seeded with the bundled profiles on first run.
     base_dir = resolve_base_dir()
 
-    # In headless mode the console carries the status output, so keep engine
-    # logging to the file and let only warnings through.
-    setup_logging(base_dir, logging.WARNING if args.headless else logging.INFO)
+    # In headless mode the console carries the status output, and --check-backend
+    # is meant to be readable at a glance, so keep engine logging to the file and
+    # let only warnings through.
+    quiet = args.headless or args.check_backend
+    setup_logging(base_dir, logging.WARNING if quiet else logging.INFO)
     logger = logging.getLogger("main")
     logger.info("Starting Fisch Macro...")
     logger.info("Data directory: %s", base_dir)
@@ -139,6 +149,9 @@ def main(argv=None):
 
         logger.info("Initializing window tracker...")
         window_tracker = WindowTracker()
+
+        if args.check_backend:
+            return report_backend(window_tracker)
 
         logger.info("Initializing detector...")
         detector = Detector(config_manager)

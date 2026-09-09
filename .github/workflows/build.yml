@@ -68,13 +68,23 @@ jobs:
         if: runner.os == 'macOS'
         run: codesign --force --deep --sign - dist/FischMacro.app
 
+      # --list-profiles returns before a WindowTracker is ever constructed, so
+      # on its own it proves the bundle imports and packages and nothing about
+      # whether window lookup works. --check-backend runs the real platform
+      # walk — EnumWindows and the DWM call on Windows, _NET_CLIENT_LIST on
+      # X11 — so a broken ctypes signature fails the build here instead of on
+      # a user's machine. Finding no game window is expected and is not an error.
       - name: Verify the build runs
         if: runner.os == 'macOS'
-        run: dist/FischMacro.app/Contents/MacOS/FischMacro --list-profiles
+        run: |
+          dist/FischMacro.app/Contents/MacOS/FischMacro --list-profiles
+          dist/FischMacro.app/Contents/MacOS/FischMacro --check-backend
 
       - name: Verify the build runs
         if: runner.os == 'Windows'
-        run: dist/FischMacro/FischMacro-cli.exe --list-profiles
+        run: |
+          dist/FischMacro/FischMacro-cli.exe --list-profiles
+          dist/FischMacro/FischMacro-cli.exe --check-backend
 
       # ditto preserves the symlinks and executable bits inside a .app that
       # upload-artifact's own zipping would flatten.
@@ -125,7 +135,9 @@ jobs:
           /tmp/buildenv/bin/pyinstaller fisch-macro.spec --noconfirm
 
       - name: Verify the build runs
-        run: xvfb-run -a dist/FischMacro/FischMacro --list-profiles
+        run: |
+          xvfb-run -a dist/FischMacro/FischMacro --list-profiles
+          xvfb-run -a dist/FischMacro/FischMacro --check-backend
 
       - name: Package
         run: tar -czf FischMacro-linux-arm64.tar.gz -C dist FischMacro
