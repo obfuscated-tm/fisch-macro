@@ -15,10 +15,14 @@ only one; the .app's inner binary still writes to the terminal when run from
 one directly.
 """
 
+import os
 import sys
 
 BUNDLE_ID = "com.obfuscated-tm.fischmacro"
-VERSION = "1.0.0"
+# CI sets FISCH_MACRO_VERSION from the tag it is releasing, so the version macOS
+# shows matches the release the bundle came from. A local build has no tag and
+# falls back to the literal below.
+VERSION = os.environ.get("FISCH_MACRO_VERSION") or "1.0.0"
 
 IS_WINDOWS = sys.platform.startswith("win")
 IS_MACOS = sys.platform == "darwin"
