@@ -282,6 +282,13 @@ it built, with notes generated from the commits since the last release. Pushing 
 `v*` tag by hand does the same thing. Leaving the version blank builds without
 releasing anything.
 
+The version itself is written down once, in [`VERSION`](VERSION) at the project
+root. The spec file reads it when packaging, CI reads it to name a build, and
+`fisch-macro --version` reports it — so a downloaded build can say which release
+it came from. Releasing a version that differs from the file is allowed (the tag
+wins, and the build carries it) but warns in the run, as a nudge to bump
+`VERSION` in the same series of commits.
+
 Neither build is signed by a certificate authority. macOS ad-hoc signs the
 bundle, which gives it a stable identity so permission grants survive
 relaunches, but Gatekeeper still warns — right-click then Open the first time.

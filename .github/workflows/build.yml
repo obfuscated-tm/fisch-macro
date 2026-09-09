@@ -49,10 +49,13 @@ jobs:
             tag=""
           fi
 
+          # The VERSION file is the one place the development version is
+          # written down; the spec and the app itself read the same file.
+          declared="$(tr -d '[:space:]' < VERSION)"
+
           if [ -z "$tag" ]; then
-            # Not a release: carry whatever the spec already declares, so a PR
-            # build is versioned the same as it is today.
-            version="$(sed -n 's/^VERSION = .*"\(.*\)".*/\1/p' fisch-macro.spec)"
+            # Not a release: build under the version the tree declares.
+            version="$declared"
             echo "release=false" >> "$GITHUB_OUTPUT"
           else
             version="${tag#v}"
@@ -66,6 +69,12 @@ jobs:
               && gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${tag}" >/dev/null 2>&1; then
               echo "::error::tag ${tag} already exists"
               exit 1
+            fi
+            if [ "$version" != "$declared" ]; then
+              # Not fatal — the tag is what is being released, and the build
+              # carries it either way. Worth saying out loud so the VERSION
+              # file gets bumped to match rather than drifting silently.
+              echo "::warning::releasing ${version}, but VERSION says ${declared}"
             fi
             echo "release=true" >> "$GITHUB_OUTPUT"
           fi
@@ -145,12 +154,18 @@ jobs:
         run: |
           dist/FischMacro.app/Contents/MacOS/FischMacro --list-profiles
           dist/FischMacro.app/Contents/MacOS/FischMacro --check-backend
+          dist/FischMacro.app/Contents/MacOS/FischMacro --version \
+            | grep -qF "${FISCH_MACRO_VERSION}"
 
       - name: Verify the build runs
         if: runner.os == 'Windows'
         run: |
           dist/FischMacro/FischMacro-cli.exe --list-profiles
           dist/FischMacro/FischMacro-cli.exe --check-backend
+          $reported = & dist/FischMacro/FischMacro-cli.exe --version
+          if ($reported -notmatch [regex]::Escape($env:FISCH_MACRO_VERSION)) {
+            throw "built binary reports '$reported', expected $env:FISCH_MACRO_VERSION"
+          }
 
       # ditto preserves the symlinks and executable bits inside a .app that
       # upload-artifact's own zipping would flatten.
@@ -206,6 +221,8 @@ jobs:
         run: |
           xvfb-run -a dist/FischMacro/FischMacro --list-profiles
           xvfb-run -a dist/FischMacro/FischMacro --check-backend
+          xvfb-run -a dist/FischMacro/FischMacro --version \
+            | grep -qF "${FISCH_MACRO_VERSION}"
 
       - name: Package
         run: tar -czf FischMacro-linux-arm64.tar.gz -C dist FischMacro
