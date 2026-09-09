@@ -14,6 +14,7 @@ with the tuning parameters folded away behind their section headers.
 """
 
 import logging
+import sys
 import time
 import tkinter as tk
 from tkinter import ttk, messagebox, simpledialog
@@ -125,7 +126,8 @@ class MacroGUI:
         self.engine.controller.on_hotkey(
             lambda: self.root.after(0, self._toggle_from_hotkey)
         )
-        self.root.bind_all("<KeyRelease-F6>", lambda _event: self._toggle_from_hotkey())
+        self._bound_keysym = None
+        self._bind_hotkey_key()
 
         # Auto-save setup
         self._setup_auto_save()
@@ -138,6 +140,9 @@ class MacroGUI:
 
         # Handle window close
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
+
+        # Last, so the log tab it writes to exists.
+        self._check_input_permission()
 
     def _setup_auto_save(self):
         """Add traces to all settings variables for automatic saving."""
@@ -414,6 +419,9 @@ class MacroGUI:
             font=("Helvetica Neue", 10, "bold"),
         ).pack(anchor=tk.W)
 
+        # height=3 is three *lines*, for the placeholder text. Tk reads the
+        # same option as three *pixels* once an image is showing, so it has to
+        # be cleared before the frame goes in — see _show_vision_image.
         self.vision_image_label = tk.Label(
             vision_inner,
             text="Start macro to see detection…",
@@ -1138,6 +1146,106 @@ class MacroGUI:
                 activebackground="#c73a50",
             )
 
+    @staticmethod
+    def _hotkey_keysym(key_name: str) -> str:
+        """Tk keysym for a configured hotkey name ('f8' → 'F8', 'esc' → 'Escape')."""
+        name = (key_name or "").strip().lower()
+        named = {
+            "esc": "Escape",
+            "escape": "Escape",
+            "space": "space",
+            "enter": "Return",
+            "return": "Return",
+            "tab": "Tab",
+            "backspace": "BackSpace",
+            "delete": "Delete",
+        }
+        if name in named:
+            return named[name]
+        if len(name) > 1 and name[0] == "f" and name[1:].isdigit():
+            return name.upper()
+        return name
+
+    def _bind_hotkey_key(self):
+        """Point the panel's own key binding at the configured hotkey.
+
+        This is the path that works while the panel has focus; the global
+        listener in Controller is the one that works from inside Roblox. The
+        binding used to be a hardcoded <KeyRelease-F6>, so rebinding the hotkey
+        moved the global listener and left the panel still answering to F6.
+        """
+        keysym = self._hotkey_keysym(self.settings.killswitch_key)
+        if keysym == self._bound_keysym:
+            return
+        if self._bound_keysym:
+            try:
+                self.root.unbind_all(f"<KeyRelease-{self._bound_keysym}>")
+            except Exception:
+                pass
+        if not keysym:
+            self._bound_keysym = None
+            return
+        try:
+            self.root.bind_all(
+                f"<KeyRelease-{keysym}>", lambda _event: self._toggle_from_hotkey()
+            )
+        except tk.TclError:
+            logger.warning("Tk could not bind the hotkey key %r", keysym)
+            self._bound_keysym = None
+            return
+        self._bound_keysym = keysym
+
+    def _check_input_permission(self):
+        """Warn when macOS will not let this process see or send input.
+
+        Without Accessibility, pynput's listener never receives a key — it logs
+        "This process is not trusted!" and nothing else — and pyautogui's clicks
+        go nowhere. The panel still looks and behaves completely normally, so
+        the only visible symptom is the hotkey doing nothing from inside the
+        game. A downloaded .app needs its own grant: the permission belongs to
+        the bundle's signature, not to the terminal that ran the checkout, and a
+        fresh build is a new signature even at the same path.
+        """
+        if sys.platform != "darwin":
+            return
+        try:
+            from ApplicationServices import AXIsProcessTrusted
+        except ImportError:
+            return
+        try:
+            trusted = bool(AXIsProcessTrusted())
+        except Exception:
+            return
+        if trusted:
+            return
+
+        key = self.settings.killswitch_key.upper()
+        self.header_killswitch_label.config(
+            text="⚠ No Accessibility", foreground=COLORS["warning"]
+        )
+        self._append_log(
+            f"⚠ Accessibility is not granted — {key} only works while this "
+            "panel has focus, and clicks will not reach Roblox."
+        )
+        self._append_log(
+            "Grant it in System Settings → Privacy & Security → Accessibility, "
+            "then restart. Remove and re-add the entry after an update."
+        )
+        self.root.after(
+            400,
+            lambda: messagebox.showwarning(
+                "Accessibility Permission Needed",
+                "macOS is not letting Fisch Macro see or send input.\n\n"
+                f"{key} will do nothing from inside Roblox, and the macro "
+                "cannot click.\n\n"
+                "System Settings → Privacy & Security → Accessibility, add "
+                "this app, then restart it. If it is already listed after an "
+                "update, remove the entry and add it again — the permission is "
+                "tied to the build it was granted to.",
+                parent=self.root,
+            ),
+        )
+
     def _toggle_from_hotkey(self):
         """Toggle the macro from F6/global hotkey on the Tk main thread.
 
@@ -1547,6 +1655,7 @@ class MacroGUI:
         self.settings.killswitch_key = key_name
         self.config.save_settings(self.settings)
         self.engine.controller.setup_killswitch(key_name)
+        self._bind_hotkey_key()
         self._refresh_killswitch_labels()
         self._append_log(f"Toggle hotkey rebound to {key_name.upper()}")
 
@@ -1670,18 +1779,14 @@ class MacroGUI:
                 # is from a fight that has already ended. Leaving it up made
                 # the bars look like a live reading of a bar that is not there.
                 if self._vision_photo is not None:
-                    self._vision_photo = None
-                    self.vision_image_label.config(
-                        image="", text="Start macro to see detection…"
-                    )
+                    self._show_vision_placeholder("Start macro to see detection…")
                     self._set_vision_telemetry("")
                 return
 
             snap = self.engine.get_vision_snapshot()
 
             if snap.frame_bgr is None:
-                self._vision_photo = None
-                self.vision_image_label.config(image="", text="Waiting for the reel ROI…")
+                self._show_vision_placeholder("Waiting for the reel ROI…")
             else:
                 rgb = cv2.cvtColor(snap.frame_bgr, cv2.COLOR_BGR2RGB)
                 pil = Image.fromarray(rgb)
@@ -1691,7 +1796,7 @@ class MacroGUI:
                 if pil.width != target_w or pil.height != target_h:
                     pil = pil.resize((target_w, target_h), Image.Resampling.LANCZOS)
                 self._vision_photo = ImageTk.PhotoImage(pil)
-                self.vision_image_label.config(image=self._vision_photo, text="")
+                self._show_vision_image(self._vision_photo)
 
             # Updated even with no frame: while hunting, the numbers are the
             # only thing there is to see, and holding the previous fight's
@@ -1699,6 +1804,24 @@ class MacroGUI:
             self._set_vision_telemetry("\n".join(snap.summary_lines()))
         except Exception as exc:
             logger.debug("Vision panel refresh failed: %s", exc)
+
+    def _show_vision_image(self, photo) -> None:
+        """Put a rendered frame on the vision label at its full height.
+
+        The label carries height=3 for its placeholder text, which Tk counts in
+        lines. With an image in the label it counts the same number in pixels
+        instead, so the panel asked for three pixels and cropped the frame to a
+        sliver across the middle of the reel track — the catch-progress strip
+        get_debug_frame pads onto the bottom was cut off entirely and looked
+        like it was never drawn. Clearing the option lets the image size the
+        label.
+        """
+        self.vision_image_label.config(image=photo, text="", height=0)
+
+    def _show_vision_placeholder(self, text: str) -> None:
+        """Drop back to the placeholder message, height in lines again."""
+        self._vision_photo = None
+        self.vision_image_label.config(image="", text=text, height=3)
 
     def _set_vision_telemetry(self, text: str) -> None:
         """Replace the telemetry readout text."""
