@@ -4,12 +4,85 @@ on:
   push:
     tags: ["v*"]
   pull_request:
+  # Releasing from here needs no local clone and no tag push: fill in a version
+  # and this run builds every platform, then creates the tag and the release
+  # from the commit it built. Left blank it is an ordinary build with no release.
   workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to release, e.g. 1.2.0. Blank builds without releasing."
+        required: false
+        default: ""
+      prerelease:
+        description: "Mark the release as a pre-release"
+        type: boolean
+        default: false
 
 permissions:
   contents: write
 
 jobs:
+  # Settles what is being built before anything spends twenty minutes building
+  # it: the version the binaries carry, and whether this run ends in a release.
+  # A tag that already exists fails here rather than after the whole matrix.
+  resolve:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
+      version: ${{ steps.version.outputs.version }}
+      release: ${{ steps.version.outputs.release }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: version
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            tag="${GITHUB_REF_NAME}"
+          elif [ -n "${INPUT_VERSION}" ]; then
+            tag="v${INPUT_VERSION#v}"
+          else
+            tag=""
+          fi
+
+          # The VERSION file is the one place the development version is
+          # written down; the spec and the app itself read the same file.
+          declared="$(tr -d '[:space:]' < VERSION)"
+
+          if [ -z "$tag" ]; then
+            # Not a release: build under the version the tree declares.
+            version="$declared"
+            echo "release=false" >> "$GITHUB_OUTPUT"
+          else
+            version="${tag#v}"
+            # This becomes CFBundleVersion, which macOS accepts only as
+            # dot-separated numbers — reject anything else before building.
+            if ! printf '%s' "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+              echo "::error::'$tag' is not a vMAJOR.MINOR.PATCH tag"
+              exit 1
+            fi
+            if [ "${GITHUB_REF_TYPE}" != "tag" ] \
+              && gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${tag}" >/dev/null 2>&1; then
+              echo "::error::tag ${tag} already exists"
+              exit 1
+            fi
+            if [ "$version" != "$declared" ]; then
+              # Not fatal — the tag is what is being released, and the build
+              # carries it either way. Worth saying out loud so the VERSION
+              # file gets bumped to match rather than drifting silently.
+              echo "::warning::releasing ${version}, but VERSION says ${declared}"
+            fi
+            echo "release=true" >> "$GITHUB_OUTPUT"
+          fi
+
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Building $version (release: ${tag:-none})"
+
   test:
     runs-on: ubuntu-latest
     steps:
@@ -25,7 +98,7 @@ jobs:
         run: pytest tests/ -q
 
   build:
-    needs: test
+    needs: [test, resolve]
     strategy:
       fail-fast: false
       matrix:
@@ -40,6 +113,8 @@ jobs:
           - os: windows-latest
             artifact: windows-x86_64
     runs-on: ${{ matrix.os }}
+    env:
+      FISCH_MACRO_VERSION: ${{ needs.resolve.outputs.version }}
     steps:
       - uses: actions/checkout@v4
 
@@ -79,12 +154,18 @@ jobs:
         run: |
           dist/FischMacro.app/Contents/MacOS/FischMacro --list-profiles
           dist/FischMacro.app/Contents/MacOS/FischMacro --check-backend
+          dist/FischMacro.app/Contents/MacOS/FischMacro --version \
+            | grep -qF "${FISCH_MACRO_VERSION}"
 
       - name: Verify the build runs
         if: runner.os == 'Windows'
         run: |
           dist/FischMacro/FischMacro-cli.exe --list-profiles
           dist/FischMacro/FischMacro-cli.exe --check-backend
+          $reported = & dist/FischMacro/FischMacro-cli.exe --version
+          if ($reported -notmatch [regex]::Escape($env:FISCH_MACRO_VERSION)) {
+            throw "built binary reports '$reported', expected $env:FISCH_MACRO_VERSION"
+          }
 
       # ditto preserves the symlinks and executable bits inside a .app that
       # upload-artifact's own zipping would flatten.
@@ -107,9 +188,11 @@ jobs:
   # linked against Ubuntu's 2.39 will not start on Raspberry Pi OS bookworm
   # (2.36). Building against the older glibc covers both.
   build-linux-arm64:
-    needs: test
+    needs: [test, resolve]
     runs-on: ubuntu-24.04-arm
     container: debian:bookworm
+    env:
+      FISCH_MACRO_VERSION: ${{ needs.resolve.outputs.version }}
     steps:
       # gcc, the Python headers and linux-libc-dev are for evdev, which pynput
       # pulls in on Linux: it publishes no aarch64 wheel, so it is compiled
@@ -138,6 +221,8 @@ jobs:
         run: |
           xvfb-run -a dist/FischMacro/FischMacro --list-profiles
           xvfb-run -a dist/FischMacro/FischMacro --check-backend
+          xvfb-run -a dist/FischMacro/FischMacro --version \
+            | grep -qF "${FISCH_MACRO_VERSION}"
 
       - name: Package
         run: tar -czf FischMacro-linux-arm64.tar.gz -C dist FischMacro
@@ -149,8 +234,8 @@ jobs:
           if-no-files-found: error
 
   release:
-    needs: [build, build-linux-arm64]
-    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [resolve, build, build-linux-arm64]
+    if: needs.resolve.outputs.release == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
@@ -158,12 +243,26 @@ jobs:
           path: artifacts
           merge-multiple: true
 
+      # --target creates the tag at the commit that was actually built when the
+      # run started from the Actions UI. On a tag push the tag already exists
+      # and gh ignores it. Note that a tag created here does not start another
+      # workflow run — GITHUB_TOKEN pushes never do — which is why this run
+      # builds and releases rather than tagging and waiting for a second run.
       - name: Create release
         env:
           GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.resolve.outputs.tag }}
+          PRERELEASE: ${{ inputs.prerelease }}
         run: |
-          gh release create "${GITHUB_REF_NAME}" \
+          set -euo pipefail
+          flags=()
+          if [ "${PRERELEASE:-false}" = "true" ]; then
+            flags+=(--prerelease)
+          fi
+          gh release create "${TAG}" \
             --repo "${GITHUB_REPOSITORY}" \
-            --title "${GITHUB_REF_NAME}" \
+            --target "${GITHUB_SHA}" \
+            --title "${TAG}" \
             --generate-notes \
+            "${flags[@]}" \
             artifacts/*

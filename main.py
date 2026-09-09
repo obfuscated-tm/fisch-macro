@@ -12,6 +12,7 @@ from src.controller import Controller
 from src.detector import Detector
 from src.macro import MacroEngine
 from src.paths import log_dir, resolve_base_dir
+from src.version import __version__
 from src.window_tracker import WindowTracker, report_backend
 
 
@@ -63,6 +64,13 @@ def parse_args(argv=None):
     parser = argparse.ArgumentParser(
         prog="fisch-macro",
         description="Automated fishing macro for Fisch.",
+    )
+    # A downloaded build is a directory of binaries with no other way to say
+    # which release it came from; this is what a bug report should quote.
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"%(prog)s {__version__}",
     )
     parser.add_argument(
         "--headless",

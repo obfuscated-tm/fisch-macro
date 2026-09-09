@@ -15,10 +15,21 @@ only one; the .app's inner binary still writes to the terminal when run from
 one directly.
 """
 
+import os
 import sys
+import tempfile
+
+sys.path.insert(0, SPECPATH)
+
+from src.paths import APP_NAME  # noqa: E402
+from src.version import VERSION_FILE, resolve_version  # noqa: E402
 
 BUNDLE_ID = "com.obfuscated-tm.fischmacro"
-VERSION = "1.0.0"
+
+# From the VERSION file, or from FISCH_MACRO_VERSION when CI is building a
+# release of a tag the working tree does not know about. Never a literal here:
+# a second copy of the number is a copy that goes stale.
+VERSION = resolve_version()
 
 IS_WINDOWS = sys.platform.startswith("win")
 IS_MACOS = sys.platform == "darwin"
@@ -29,6 +40,15 @@ datas = [
     ("profiles", "profiles"),
     ("settings.json", "."),
 ]
+
+# The VERSION file on disk holds the development version; a release is named by
+# its tag, which the checkout has no way to know. Write the resolved version to
+# a scratch file and ship that, so `--version` from a downloaded build reports
+# the release it came from rather than whatever the tree happened to say.
+_version_dir = tempfile.mkdtemp(prefix="fisch-macro-version-")
+with open(os.path.join(_version_dir, VERSION_FILE), "w", encoding="utf-8") as f:
+    f.write(VERSION + "\n")
+datas.append((os.path.join(_version_dir, VERSION_FILE), "."))
 
 # These backends are selected at runtime by string, so static analysis does not
 # see them and they would be left out of the bundle.
@@ -99,7 +119,7 @@ gui_exe = EXE(
     a.scripts,
     [],
     exclude_binaries=True,
-    name="FischMacro",
+    name=APP_NAME,
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -120,7 +140,7 @@ if IS_WINDOWS:
             a.scripts,
             [],
             exclude_binaries=True,
-            name="FischMacro-cli",
+            name=f"{APP_NAME}-cli",
             debug=False,
             bootloader_ignore_signals=False,
             strip=False,
@@ -136,13 +156,13 @@ coll = COLLECT(
     a.datas,
     strip=False,
     upx=False,
-    name="FischMacro",
+    name=APP_NAME,
 )
 
 if IS_MACOS:
     app = BUNDLE(
         coll,
-        name="FischMacro.app",
+        name=f"{APP_NAME}.app",
         icon=None,
         # macOS ties Accessibility and Screen Recording grants to the bundle
         # identifier. Keep this stable across releases or every build asks for

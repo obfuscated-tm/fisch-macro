@@ -273,7 +273,21 @@ is deleted on exit.
 
 Builds cannot be cross-compiled; each OS builds its own.
 [`.github/workflows/build.yml`](.github/workflows/build.yml) does all of them and
-attaches the artifacts to a release on tag push.
+attaches the artifacts to a release.
+
+To cut a release, open the **build** workflow under the repository's Actions tab,
+choose **Run workflow**, and enter a version such as `1.2.0`. That one run builds
+all four artifacts, then creates the `v1.2.0` tag and the release from the commit
+it built, with notes generated from the commits since the last release. Pushing a
+`v*` tag by hand does the same thing. Leaving the version blank builds without
+releasing anything.
+
+The version itself is written down once, in [`VERSION`](VERSION) at the project
+root. The spec file reads it when packaging, CI reads it to name a build, and
+`fisch-macro --version` reports it — so a downloaded build can say which release
+it came from. Releasing a version that differs from the file is allowed (the tag
+wins, and the build carries it) but warns in the run, as a nudge to bump
+`VERSION` in the same series of commits.
 
 Neither build is signed by a certificate authority. macOS ad-hoc signs the
 bundle, which gives it a stable identity so permission grants survive
