@@ -98,12 +98,18 @@ jobs:
     runs-on: ubuntu-24.04-arm
     container: debian:bookworm
     steps:
+      # gcc, the Python headers and linux-libc-dev are for evdev, which pynput
+      # pulls in on Linux: it publishes no aarch64 wheel, so it is compiled
+      # here, and it generates its keycode table from linux/input.h.
+      # xvfb covers the smoke test below — pyautogui's X11 module opens the
+      # display at import time, so the binary cannot even start without one.
       - name: Install build dependencies
         run: |
           apt-get update
           apt-get install -y --no-install-recommends \
-            git python3 python3-pip python3-venv python3-tk \
-            binutils libgl1 libglib2.0-0
+            git python3 python3-pip python3-venv python3-tk python3-dev \
+            gcc linux-libc-dev binutils libgl1 libglib2.0-0 \
+            xvfb xauth
 
       - uses: actions/checkout@v4
 
@@ -116,7 +122,7 @@ jobs:
           /tmp/buildenv/bin/pyinstaller fisch-macro.spec --noconfirm
 
       - name: Verify the build runs
-        run: dist/FischMacro/FischMacro --list-profiles
+        run: xvfb-run -a dist/FischMacro/FischMacro --list-profiles
 
       - name: Package
         run: tar -czf FischMacro-linux-arm64.tar.gz -C dist FischMacro
