@@ -1,7 +1,7 @@
 import logging
 import time
 import tkinter as tk
-from tkinter import messagebox
+from tkinter import messagebox, ttk
 import cv2
 import numpy as np
 from PIL import Image, ImageTk
@@ -27,9 +27,15 @@ def _clamp01(value: float) -> float:
 
 
 class InteractiveCalibrator(tk.Toplevel):
-    """
-    A full-screen interactive calibration window.
-    Takes a screenshot and allows the user to pick colors and draw ROIs.
+    """A full-screen calibration window: take a screenshot, draw the regions.
+
+    It used to pick colours too -- the fish's, and the bar's on and off target
+    -- and write them to the profile as HSV ranges. Nothing read them. The
+    detector matched colour once, but moved to reading the reel track's
+    structure instead (see :mod:`src.reel_vision`), which is what makes it work
+    across rods that draw the bar white, dark red or as a rainbow gradient. The
+    three colour steps outlived their last consumer and stayed in the window,
+    asking for three careful clicks that changed nothing.
     """
 
     def __init__(self, parent, engine, config_manager, window_tracker, background_bgr=None):
@@ -50,7 +56,7 @@ class InteractiveCalibrator(tk.Toplevel):
         self.withdraw()
 
         # Calibration state
-        self.mode = None  # 'fish_color', 'bar_color', 'bar_roi', 'shake_roi', 'progress_roi'
+        self.mode = None  # 'bar_roi', 'progress_roi', 'shake_roi'
         self.rect_start = None
         self.current_rect_id = None
         self.drawn_rects = {}  # Store rect IDs for the different ROIs
@@ -152,22 +158,69 @@ class InteractiveCalibrator(tk.Toplevel):
 
     #: (mode, button label, one-line instruction) for each calibration step.
     STEPS = (
-        ("fish_color", "1 · Fish colour",
-         "Click the FISH icon inside the reel bar (usually pink)."),
-        ("on_target_color", "2 · Bar on target",
-         "Click the reel bar while it is GREEN, i.e. sitting on the fish."),
-        ("off_target_color", "3 · Bar off target",
-         "Click the reel bar while it is WHITE or ORANGE, i.e. off the fish."),
-        ("bar_roi", "4 · Reel bar area",
+        ("bar_roi", "1 · Reel bar area",
          "Drag a box around the whole slider track, end to end."),
-        ("progress_roi", "5 · Progress bar",
+        ("progress_roi", "2 · Progress bar",
          "Drag a box over the catch progress bar below the track."),
-        ("shake_roi", "6 · Shake area",
+        ("shake_roi", "3 · Shake area",
          "Drag a big box over the area where SHAKE prompts appear."),
     )
 
+    #: Toolbar button colours: (style name, background, active background).
+    #:
+    #: Every one carries white text and clears WCAG AA's 4.5:1 against it, which
+    #: the panel's own accent shades did not: this toolbar used to put white on
+    #: #4fc3f7 at 2.0:1 and, for the selected step, on #9ad9fb at 1.5:1 -- pale
+    #: enough that the label was barely there even once macOS could be
+    #: persuaded to draw the colour at all. A selected step is now a *darker*
+    #: shade of its own colour rather than a lighter one, which reads as
+    #: pressed and gains contrast instead of losing it.
+    BUTTON_STYLES = (
+        ("CalRoi", "#1565c0", "#11529c"),       # the box-drawing steps
+        ("CalRoiOn", "#0d47a1", "#0d47a1"),     # ...while selected
+        ("CalRetake", "#5c6bc0", "#4a58a8"),
+        ("CalSave", "#1f8438", "#186b2d"),
+        ("CalCancel", "#c62534", "#a81f2c"),
+    )
+
+    def _configure_button_styles(self):
+        """Give the toolbar buttons colours macOS will actually draw.
+
+        tk.Button takes a background and, on macOS, ignores it: the Aqua button
+        is drawn by the system, so every one of these came out as a plain white
+        rectangle -- with white text on it, which is to say invisible. Captured
+        under Tk 9.0.3, a tk.Button asking for #e94560 renders white whether or
+        not it is given a flat relief and no border.
+
+        ttk's "clam" theme draws the button itself rather than asking the
+        system to, so the colour is honoured. It is also the theme the control
+        panel already uses, and being pure Tk it looks the same wherever the
+        panel runs -- the same reason the fonts here are sized in pixels.
+        """
+        style = ttk.Style(self)
+        try:
+            style.theme_use("clam")
+        except tk.TclError:      # pragma: no cover - clam ships with Tk
+            pass
+        for name, background, active in self.BUTTON_STYLES:
+            style.configure(
+                f"{name}.TButton",
+                background=background,
+                foreground="white",
+                borderwidth=0,
+                focuscolor=background,
+                padding=(10, 5),
+                font=("Helvetica Neue", -12),
+            )
+            style.map(
+                f"{name}.TButton",
+                background=[("active", active), ("pressed", active)],
+                foreground=[("active", "white"), ("pressed", "white")],
+            )
+
     def _build_ui(self):
         """Build the canvas and the control toolbar."""
+        self._configure_button_styles()
         # Canvas
         self.canvas = tk.Canvas(
             self,
@@ -193,7 +246,7 @@ class InteractiveCalibrator(tk.Toplevel):
         # Instruction Label
         self.instruction_label = tk.Label(
             self.toolbar,
-            text="Pick a step below. Work through 1–6, then press Save & Close.",
+            text="Pick a step below. Work through 1–3, then press Save & Close.",
             fg=COLORS["text"], bg=COLORS["bg_card"],
             font=("Helvetica Neue", -16, "bold")
         )
@@ -204,11 +257,9 @@ class InteractiveCalibrator(tk.Toplevel):
 
         self.buttons = {}
         for mode, label, _hint in self.STEPS:
-            colour = COLORS["accent"] if mode.endswith("_color") else COLORS["accent_blue"]
-            btn = tk.Button(
-                btn_frame, text=label, font=("Helvetica Neue", -12),
-                bg=colour, fg="white", cursor="hand2",
-                highlightbackground=COLORS["bg_card"],
+            btn = ttk.Button(
+                btn_frame, text=label, cursor="hand2",
+                style=f"{self._step_style(mode)}.TButton",
                 command=lambda m=mode: self._set_mode(m),
             )
             btn.pack(side=tk.LEFT, padx=3)
@@ -217,19 +268,19 @@ class InteractiveCalibrator(tk.Toplevel):
         action_frame = tk.Frame(self.toolbar, bg=COLORS["bg_card"])
         action_frame.pack(side=tk.TOP, pady=(0, 8), padx=10)
 
-        tk.Button(
-            action_frame, text="Retake screenshot", font=("Helvetica Neue", -12),
-            bg="#5c6bc0", fg="white", cursor="hand2", command=self._retake_screenshot
+        ttk.Button(
+            action_frame, text="Retake screenshot", cursor="hand2",
+            style="CalRetake.TButton", command=self._retake_screenshot
         ).pack(side=tk.LEFT, padx=3)
 
-        tk.Button(
-            action_frame, text="✓ Save & Close", font=("Helvetica Neue", -12, "bold"),
-            bg="#28a745", fg="white", cursor="hand2", command=self._save_and_close
+        ttk.Button(
+            action_frame, text="✓ Save & Close", cursor="hand2",
+            style="CalSave.TButton", command=self._save_and_close
         ).pack(side=tk.LEFT, padx=3)
 
-        tk.Button(
-            action_frame, text="✕ Cancel", font=("Helvetica Neue", -12),
-            bg="#dc3545", fg="white", cursor="hand2", command=self._cancel
+        ttk.Button(
+            action_frame, text="✕ Cancel", cursor="hand2",
+            style="CalCancel.TButton", command=self._cancel
         ).pack(side=tk.LEFT, padx=3)
 
         # Checklist: what this session has changed, and what is still untouched.
@@ -248,17 +299,24 @@ class InteractiveCalibrator(tk.Toplevel):
 
         self._refresh_checklist()
 
+    @staticmethod
+    def _step_style(mode: str, selected: bool = False) -> str:
+        """Which button style a step wears; the selected one is darker."""
+        return "CalRoiOn" if selected else "CalRoi"
+
     def _refresh_checklist(self):
         """Redraw the ✓/· line and re-mark the step buttons."""
         marks = []
         for mode, label, _hint in self.STEPS:
             done = mode in self.completed
             marks.append(("✓ " if done else "·  ") + label.split(" · ")[1])
+            # The selected step is shown by a lighter shade of its own colour.
+            # It used to be a SUNKEN relief and a bolder font, neither of which
+            # a ttk button takes -- and the relief was invisible anyway on a
+            # button macOS was drawing itself.
             self.buttons[mode].config(
                 text=("✓ " if done else "") + label,
-                relief=tk.SUNKEN if mode == self.mode else tk.RAISED,
-                font=("Helvetica Neue", -12, "bold") if mode == self.mode
-                else ("Helvetica Neue", 12),
+                style=f"{self._step_style(mode, selected=mode == self.mode)}.TButton",
             )
         self.checklist_label.config(text="   ".join(marks))
 
@@ -334,54 +392,7 @@ class InteractiveCalibrator(tk.Toplevel):
         if not self.mode:
             return
 
-        if self.mode.endswith("_color"):
-            # Color picking
-            physical_x = int(event.x * self.scale_factor)
-            physical_y = int(event.y * self.scale_factor)
-
-            # Ensure within bounds
-            h, w = self.raw_bgr.shape[:2]
-            if 0 <= physical_x < w and 0 <= physical_y < h:
-                bgr = self.raw_bgr[physical_y, physical_x]
-                hsv = cv2.cvtColor(np.uint8([[bgr]]), cv2.COLOR_BGR2HSV)[0][0]
-
-                h_val, s_val, v_val = hsv
-
-                # Dynamic padding based on mode
-                if self.mode == "fish_color":
-                    # Pink fish needs specific hue but can be bright
-                    h_low, h_high = max(0, int(h_val)-20), min(179, int(h_val)+20)
-                    s_low, s_high = max(60, int(s_val)-60), min(255, int(s_val)+60)
-                    v_low, v_high = max(50, int(v_val)-60), min(255, int(v_val)+60)
-                else:
-                    # Bar colors (green/white/orange) - use wider range for gradients
-                    h_low, h_high = max(0, int(h_val)-25), min(179, int(h_val)+25)
-                    s_low, s_high = max(30, int(s_val)-70), min(255, int(s_val)+70)
-                    v_low, v_high = max(30, int(v_val)-70), min(255, int(v_val)+70)
-
-                low_arr = [h_low, s_low, v_low]
-                high_arr = [h_high, s_high, v_high]
-
-                if self.mode == "fish_color":
-                    self.profile.fish_hsv_low = low_arr
-                    self.profile.fish_hsv_high = high_arr
-                    self.info_label.config(text=f"Fish colour picked — HSV {low_arr} to {high_arr}")
-                elif self.mode == "on_target_color":
-                    self.profile.on_target_hsv_low = low_arr
-                    self.profile.on_target_hsv_high = high_arr
-                    # Also update the general bar color for backward compatibility
-                    self.profile.bar_hsv_low = low_arr
-                    self.profile.bar_hsv_high = high_arr
-                    self.info_label.config(text=f"On-target colour picked — HSV {low_arr} to {high_arr}")
-                elif self.mode == "off_target_color":
-                    self.profile.off_target_hsv_low = low_arr
-                    self.profile.off_target_hsv_high = high_arr
-                    self.info_label.config(text=f"Off-target colour picked — HSV {low_arr} to {high_arr}")
-
-                self.completed.add(self.mode)
-                self._refresh_checklist()
-
-        elif self.mode.endswith("_roi"):
+        if self.mode.endswith("_roi"):
             # ROI Drawing
             self.rect_start = (event.x, event.y)
 

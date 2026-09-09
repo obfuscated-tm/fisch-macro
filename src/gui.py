@@ -1361,17 +1361,10 @@ class MacroGUI:
         if shift:
             lines.append(f"{'':<9}{shift.strip()}")
 
+        # The profile's HSV ranges used to be printed here. They described a
+        # colour-matching reader the detector no longer has, so the readout was
+        # reporting numbers that could not affect anything it did.
         lines.append("")
-        lines.append(
-            f"Fish      H {profile.fish_hsv_low[0]:>3}–{profile.fish_hsv_high[0]:<3}"
-            f" S {profile.fish_hsv_low[1]:>3}–{profile.fish_hsv_high[1]:<3}"
-            f" V {profile.fish_hsv_low[2]:>3}–{profile.fish_hsv_high[2]:<3}"
-        )
-        lines.append(
-            f"Bar       H {profile.bar_hsv_low[0]:>3}–{profile.bar_hsv_high[0]:<3}"
-            f" S {profile.bar_hsv_low[1]:>3}–{profile.bar_hsv_high[1]:<3}"
-            f" V {profile.bar_hsv_low[2]:>3}–{profile.bar_hsv_high[2]:<3}"
-        )
         lines.append(f"Brightness threshold  {profile.bar_brightness_threshold}")
         return "\n".join(lines)
 
