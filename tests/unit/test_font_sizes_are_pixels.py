@@ -27,7 +27,15 @@ sys.path.insert(0, str(ROOT))
 #: Every module that builds Tk widgets of its own.
 UI_SOURCES = ["src/gui.py", "src/interactive_calibrator.py"]
 
-FONT_SPEC = re.compile(r'font=\("([^"]+)",\s*(-?\d+)')
+#: The families the panel draws with. Matching on these rather than on
+#: ``font=`` catches a size passed as a bare tuple -- a conditional font
+#: expression, or one handed to a style -- which is exactly where a point size
+#: survived the first sweep of this.
+FAMILIES = ("Helvetica Neue", "Menlo")
+
+FONT_SPEC = re.compile(
+    r'\("(' + "|".join(re.escape(f) for f in FAMILIES) + r')",\s*(-?\d+)'
+)
 
 
 def _specs(relative_path):
