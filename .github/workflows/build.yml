@@ -1,0 +1,148 @@
+name: build
+
+on:
+  push:
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pytest
+      - name: Run tests
+        run: pytest tests/ -q
+
+  build:
+    needs: test
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            artifact: macos-arm64
+          - os: macos-13
+            artifact: macos-x86_64
+          - os: windows-latest
+            artifact: windows-x86_64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pyinstaller
+
+      # A Python without tkinter builds a bundle whose GUI silently does not
+      # exist — PyInstaller only warns. Fail here instead of shipping it.
+      - name: Verify tkinter is present
+        run: python -c "import tkinter; print('tkinter', tkinter.TkVersion)"
+
+      - name: Build
+        run: pyinstaller fisch-macro.spec --noconfirm
+
+      # macOS ties Accessibility and Screen Recording grants to the code
+      # signature. An ad-hoc signature is not a Developer ID — Gatekeeper still
+      # warns — but it gives the bundle a stable identity so the permissions
+      # the user grants survive relaunches.
+      - name: Ad-hoc sign (macOS)
+        if: runner.os == 'macOS'
+        run: codesign --force --deep --sign - dist/FischMacro.app
+
+      - name: Verify the build runs
+        if: runner.os == 'macOS'
+        run: dist/FischMacro.app/Contents/MacOS/FischMacro --list-profiles
+
+      - name: Verify the build runs
+        if: runner.os == 'Windows'
+        run: dist/FischMacro/FischMacro-cli.exe --list-profiles
+
+      # ditto preserves the symlinks and executable bits inside a .app that
+      # upload-artifact's own zipping would flatten.
+      - name: Package (macOS)
+        if: runner.os == 'macOS'
+        run: ditto -c -k --keepParent dist/FischMacro.app FischMacro-${{ matrix.artifact }}.zip
+
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        run: Compress-Archive -Path dist/FischMacro/* -DestinationPath FischMacro-${{ matrix.artifact }}.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: FischMacro-${{ matrix.artifact }}
+          path: FischMacro-${{ matrix.artifact }}.zip
+          if-no-files-found: error
+
+  # Built inside a Debian bookworm container rather than on the runner's own
+  # Ubuntu 24.04: glibc is forward- but not backward-compatible, and a binary
+  # linked against Ubuntu's 2.39 will not start on Raspberry Pi OS bookworm
+  # (2.36). Building against the older glibc covers both.
+  build-linux-arm64:
+    needs: test
+    runs-on: ubuntu-24.04-arm
+    container: debian:bookworm
+    steps:
+      - name: Install build dependencies
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            git python3 python3-pip python3-venv python3-tk \
+            binutils libgl1 libglib2.0-0
+
+      - uses: actions/checkout@v4
+
+      - name: Build
+        run: |
+          python3 -m venv /tmp/buildenv
+          /tmp/buildenv/bin/pip install --upgrade pip
+          /tmp/buildenv/bin/pip install -r requirements.txt pyinstaller
+          /tmp/buildenv/bin/python -c "import tkinter; print('tkinter', tkinter.TkVersion)"
+          /tmp/buildenv/bin/pyinstaller fisch-macro.spec --noconfirm
+
+      - name: Verify the build runs
+        run: dist/FischMacro/FischMacro --list-profiles
+
+      - name: Package
+        run: tar -czf FischMacro-linux-arm64.tar.gz -C dist FischMacro
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: FischMacro-linux-arm64
+          path: FischMacro-linux-arm64.tar.gz
+          if-no-files-found: error
+
+  release:
+    needs: [build, build-linux-arm64]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --title "${GITHUB_REF_NAME}" \
+            --generate-notes \
+            artifacts/*
