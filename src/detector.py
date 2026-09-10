@@ -700,10 +700,20 @@ class Detector:
         # Every candidate band is read and the most bar-like wins -- not the
         # first that passes, because the true band is sometimes the marginal
         # one and a stricter test would then hand the frame to a patch of
-        # scenery that passed more easily. The whole strip is included as a
-        # last resort, for a caller that has already cropped tight to the fill.
+        # scenery that passed more easily.
         candidates = self._progress_bands(progress_frame)
-        candidates.append((0, progress_frame.shape[0]))
+
+        # The whole strip is a last resort for a caller that has already
+        # cropped tight to the fill, and it is only offered when the strip is
+        # actually bar-sized. Offered unconditionally, it was handed to the
+        # padded strip that every real caller passes -- three times a bar's
+        # height, by construction (:meth:`padded_progress_roi`) -- and on the
+        # frames where the outline search came up empty it read the scenery in
+        # that padding as though it were the bar. On tests/clips it reported
+        # 95% against a rainbow gradient, a splash of impact VFX and the rod
+        # itself, one frame after reading 11% off the real bar.
+        if self.PROGRESS_MIN_BAND <= progress_frame.shape[0] <= self.PROGRESS_MAX_BAND:
+            candidates.append((0, progress_frame.shape[0]))
 
         reads = []
         for top, bottom in candidates:
