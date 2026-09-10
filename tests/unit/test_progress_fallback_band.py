@@ -31,7 +31,7 @@ def _reader(monkeypatch_bands_to_nothing=True):
     detector = Detector(ConfigManager(str(ROOT)))
     detector._progress_bands = lambda _frame: []
     # Any band handed to the reader reads as a full, confident bar.
-    detector._read_progress_band = lambda _strip: (0.95, 1.5)
+    detector._read_progress_band = lambda _strip, prefer=None: (0.95, 1.5)
     return detector
 
 
@@ -64,5 +64,5 @@ def test_a_real_band_is_still_read_from_a_padded_strip():
     """The gate only removes the whole-strip candidate, not the found ones."""
     detector = Detector(ConfigManager(str(ROOT)))
     detector._progress_bands = lambda _frame: [(14, 25)]
-    detector._read_progress_band = lambda _strip: (0.42, 2.0)
+    detector._read_progress_band = lambda _strip, prefer=None: (0.42, 2.0)
     assert detector.detect_progress(_strip(42)) == 0.42

@@ -159,6 +159,17 @@ class Detector:
     # resize, a new fight). See _pick_progress_band.
     PROGRESS_BAND_STICKINESS = 1.5
 
+    # The same idea one level down, for the fill boundary within the band. The
+    # bar's unfilled remainder is often its own gradient washed out, so the
+    # true boundary is a weak step and a colour transition inside the fill
+    # competes with it on even terms -- and the reading snaps between the two
+    # from frame to frame. A step near where the boundary was is preferred,
+    # within a window wide enough for the boundary's own motion (progress moves
+    # at most ~12%/s, so a frame's worth is well under a percent) but far
+    # narrower than the gap to a rival step. See _progress_step.
+    PROGRESS_CUT_STICKINESS = 1.5
+    PROGRESS_CUT_WINDOW = 0.06      # fraction of the strip's width
+
     def __init__(self, config_manager):
         self._config = config_manager
         self._mss = None           # lazy-initialised mss instance
@@ -175,6 +186,7 @@ class Detector:
         self._shake_countdown = 0
         self._last_progress = 0.0
         self._progress_band = None      # rows the bar was read from last frame
+        self._progress_cut = None       # where the fill ended, as a fraction
 
     def reset_session(self) -> None:
         """Forget per-fight vision state. Call when a new minigame starts."""
@@ -186,6 +198,7 @@ class Detector:
         self._relocate_countdown = 0
         self._last_progress = 0.0
         self._progress_band = None
+        self._progress_cut = None
 
     # ------------------------------------------------------------------
     # Window / monitor helpers
@@ -570,7 +583,9 @@ class Detector:
 
     # ---- progress bar --------------------------------------------------
 
-    def _progress_step(self, profile: np.ndarray) -> Optional[Tuple[int, float, float]]:
+    def _progress_step(
+        self, profile: np.ndarray, prefer: Optional[int] = None
+    ) -> Optional[Tuple[int, float, float]]:
         """Sharpest colour step along one Lab column profile.
 
         Returns ``(column, magnitude, rival)`` -- where the profile changes
@@ -581,6 +596,15 @@ class Detector:
         A light blur precedes the difference because the boundary is
         antialiased over a column or two, and without it the step is split
         between them and can lose to noise.
+
+        ``prefer`` is the column the boundary was at last frame, when there is
+        one. The sharpest step is then only taken if it is decisively sharper
+        than the best step near that column, because two steps of similar size
+        make a plain argmax flip between them -- which is what the fill
+        fraction was doing on the gradient rods, snapping between two values
+        and back while reading from the right rows the whole time. Band
+        finding passes nothing: it looks for rows that agree on a column, and
+        that agreement has to be measured without a thumb on the scale.
         """
         width = len(profile)
         margin = max(3, int(width * self.PROGRESS_EDGE_MARGIN))
@@ -592,6 +616,16 @@ class Detector:
         if steps.size == 0:
             return None
         peak = int(np.argmax(steps))
+
+        if prefer is not None:
+            window = max(2, int(width * self.PROGRESS_CUT_WINDOW))
+            lo = max(0, prefer - margin - window)
+            hi = min(len(steps), prefer - margin + window + 1)
+            if hi > lo:
+                near = lo + int(np.argmax(steps[lo:hi]))
+                if steps[peak] <= steps[near] * self.PROGRESS_CUT_STICKINESS:
+                    peak = near
+
         return margin + peak + 1, float(steps[peak]), float(np.percentile(steps, 90))
 
     def _progress_bands(self, frame: np.ndarray) -> list:
@@ -715,9 +749,12 @@ class Detector:
         if self.PROGRESS_MIN_BAND <= progress_frame.shape[0] <= self.PROGRESS_MAX_BAND:
             candidates.append((0, progress_frame.shape[0]))
 
+        width = progress_frame.shape[1]
+        prefer = None if self._progress_cut is None else int(self._progress_cut * width)
+
         reads = []
         for top, bottom in candidates:
-            read = self._read_progress_band(progress_frame[top:bottom])
+            read = self._read_progress_band(progress_frame[top:bottom], prefer=prefer)
             if read is None:
                 continue
             fill, confidence = read
@@ -725,8 +762,16 @@ class Detector:
         if not reads:
             return None
 
+        previous_band = self._progress_band
         band, fill = self._pick_progress_band(reads)
         self._progress_band = band
+        # A boundary belongs to the bar it was found on. When the reader moves
+        # to rows that do not overlap the ones it was reading, it is no longer
+        # looking at the same bar and has no business steering by the old cut.
+        if previous_band is not None and not self._bands_overlap(band, previous_band):
+            self._progress_cut = None
+        else:
+            self._progress_cut = fill
         return fill
 
     def _pick_progress_band(self, reads: list) -> Tuple[Tuple[int, int], float]:
@@ -766,7 +811,9 @@ class Detector:
         """True when two row ranges share any row."""
         return a[0] < b[1] and b[0] < a[1]
 
-    def _read_progress_band(self, strip: np.ndarray) -> Optional[Tuple[float, float]]:
+    def _read_progress_band(
+        self, strip: np.ndarray, prefer: Optional[int] = None
+    ) -> Optional[Tuple[float, float]]:
         """``(fill, confidence)`` for one candidate band, or None if it is not a bar.
 
         Confidence is how far clear of the presence thresholds the band reads,
@@ -780,7 +827,7 @@ class Detector:
         # Median down each column: the fill is uniform vertically, so this
         # rejects the odd overlaid sprite without blurring the boundary.
         profile = np.median(lab, axis=0)
-        found = self._progress_step(profile)
+        found = self._progress_step(profile, prefer=prefer)
         if found is None:
             return None
         cut, step, rival = found
